@@ -236,7 +236,11 @@ def _verify_with_lint() -> tuple[bool, str]:
 
 
 def tool_add_item(args: dict[str, Any]) -> str:
-    section = args["section"]
+    # `section` defaults to "Inbox" — append-only buffer at the bottom of the
+    # backlog, periodically curated into topical sections. Mirrors the
+    # CHANGELOG-INBOX → CHANGELOG flow. The file must contain a `## Inbox`
+    # heading (above the archive); add_item fails closed otherwise.
+    section = args.get("section") or "Inbox"
     files = args["files"]
     severity = args["severity"]
     description = args["description"]
@@ -427,16 +431,22 @@ TOOLS: list[tuple[str, str, dict, Any]] = [
     ),
     (
         "add_item",
-        "Create a new backlog item with the next free ID. Verifies via lint and rolls back on failure.",
+        "Create a new backlog item with the next free ID. Defaults to the `## Inbox` "
+        "section (append-only buffer; curated into topical sections later). Pass an "
+        "explicit `section` only if you're confident which topical section it belongs "
+        "in. Verifies via lint and rolls back on failure.",
         {
             "type": "object",
             "properties": {
-                "section": {"type": "string"},
+                "section": {
+                    "type": "string",
+                    "description": "Section heading. Defaults to 'Inbox'. Use 'Section → Subsection' for nested.",
+                },
                 "files": {"type": "string"},
                 "severity": {"type": "string"},
                 "description": {"type": "string"},
             },
-            "required": ["section", "files", "severity", "description"],
+            "required": ["files", "severity", "description"],
         },
         tool_add_item,
     ),

@@ -1,6 +1,6 @@
 [project]
 name = "backlog-mcp"
-version = "0.1.0"
+version = "0.2.0"
 description = "MCP server exposing a markdown-table backlog (and optional scoring CSV) to agents."
 readme = "README.md"
 requires-python = ">=3.10"

@@ -114,13 +114,18 @@ the first time.
 | `list_sections` | Enumerate sections + open-item counts |
 | `lint` | Run hygiene checks, return findings |
 
-### Write (Phase 2 — gated on Phase 1 stability in your project)
+### Write
 
 | Tool | What it does |
 |---|---|
-| `add_item` | Create a new item; auto-assign next free ID; lint-verify, roll back on failure |
+| `add_item` | Create a new item; auto-assign next free ID; defaults to the `## Inbox` section. Pass `section` to target a specific topical section. Verifies via lint and rolls back on failure. |
 | `update_status` | Flip in_progress / done / open; requires `branch` for in_progress |
 | `set_score` | Insert or update a row in the scoring CSV |
+
+`add_item` expects a `## Inbox` section in the backlog (above `## Done — archive`)
+when no explicit section is given. Mirrors the `CHANGELOG-INBOX → CHANGELOG`
+buffer pattern: file fast, curate periodically. If you don't want this flow,
+pass an explicit `section` argument on every call.
 
 ## CLI: `backlog-lint`
 
