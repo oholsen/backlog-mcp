@@ -105,9 +105,11 @@ _ALL_TOOLS: list[tuple] = list(_STDIO_TOOLS) + [(*_QUERY_TOOL, None)]
 
 @server.list_tools()
 async def handle_list_tools() -> list[Tool]:
+    has_api_key = bool(os.environ.get("ANTHROPIC_API_KEY"))
     return [
         Tool(name=name, description=desc, inputSchema=schema)
         for name, desc, schema, _ in _ALL_TOOLS
+        if name != "query" or has_api_key
     ]
 
 
