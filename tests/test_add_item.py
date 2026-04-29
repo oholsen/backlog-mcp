@@ -33,7 +33,6 @@ def test_add_item_defaults_to_inbox(server_with_inbox):
     srv, backlog = server_with_inbox
     result = srv.tool_add_item({
         "files": "src/x.rs",
-        "severity": "Low",
         "description": "Test item filed without section.",
     })
     assert "Added" in result, result
@@ -51,7 +50,6 @@ def test_add_item_explicit_section(server_with_inbox):
     result = srv.tool_add_item({
         "section": "Section A",
         "files": "src/y.rs",
-        "severity": "High",
         "description": "Test item explicitly placed.",
     })
     assert "Added" in result
@@ -68,13 +66,11 @@ def test_add_item_assigns_next_free_id(server_with_inbox):
     # Fixture max ID is 5 (the archived one). Next free should be 6.
     result = srv.tool_add_item({
         "files": "f",
-        "severity": "Low",
         "description": "first new",
     })
     assert "#6" in result, result
     result = srv.tool_add_item({
         "files": "f",
-        "severity": "Low",
         "description": "second new",
     })
     assert "#7" in result, result

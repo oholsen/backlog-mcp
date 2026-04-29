@@ -90,7 +90,6 @@ def tool_list_items(args: dict[str, Any]) -> str:
 
     status = (args.get("status") or "open").lower()
     section_filter = args.get("section")
-    severity_filter = args.get("severity")
     ready_filter = args.get("ready")
     max_c = args.get("max_complexity")
     min_v = args.get("min_value")
@@ -109,8 +108,6 @@ def tool_list_items(args: dict[str, Any]) -> str:
             it.section + " " + (it.subsection or "")
         ).lower():
             continue
-        if severity_filter and severity_filter.lower() != it.severity.lower():
-            continue
         sc = scores.get(it.id)
         if ready_filter:
             if not sc or sc.ready.lower() != ready_filter.lower():
@@ -128,7 +125,7 @@ def tool_list_items(args: dict[str, Any]) -> str:
         score_str = ""
         if sc and sc.complexity is not None and sc.value is not None:
             score_str = f" [C{sc.complexity}/V{sc.value}]"
-        out.append(f"#{it.id} [{it.severity}]{score_str} {one_line_summary(it.description)}")
+        out.append(f"#{it.id}{score_str} {one_line_summary(it.description)}")
         if len(out) >= limit:
             break
 
@@ -147,7 +144,7 @@ def tool_get_item(args: dict[str, Any]) -> str:
     sc = _scores().get(id_)
     section_path = it.section + (f" → {it.subsection}" if it.subsection else "")
     lines = [
-        f"#{it.id} — {it.severity} severity",
+        f"#{it.id}",
         f"Section: {section_path}",
         f"Status: {'archived (DONE)' if it.archived else ('in progress' if it.in_progress else 'open')}",
         f"Files: {it.files}",
@@ -242,12 +239,11 @@ def tool_add_item(args: dict[str, Any]) -> str:
     # heading (above the archive); add_item fails closed otherwise.
     section = args.get("section") or "Inbox"
     files = args["files"]
-    severity = args["severity"]
     description = args["description"]
 
     text = BACKLOG_PATH.read_text()
     new_id = _next_free_id()
-    new_row = f"| {new_id} | {files} | {severity} | {description} |\n"
+    new_row = f"| {new_id} | {files} | {description} |\n"
 
     if " → " in section:
         _, h2 = section.split(" → ", 1)
@@ -298,14 +294,14 @@ def tool_update_status(args: dict[str, Any]) -> str:
         if not branch:
             return "branch is required for status=in_progress"
         new_desc = f"**IN PROGRESS ({branch})** {new_desc}"
-        new_line = f"| {it.id} | {it.files} | {it.severity} | {new_desc} |"
+        new_line = f"| {it.id} | {it.files} | {new_desc} |"
     elif new_status == "done":
         if not new_desc.lstrip().startswith("**DONE"):
             done_marker = f"**DONE{f' ({summary})' if summary else ''}**"
             new_desc = f"{done_marker} {new_desc}"
-        new_line = f"| ~~{it.id}~~ | ~~{it.files}~~ | ~~{it.severity}~~ | {new_desc} |"
+        new_line = f"| ~~{it.id}~~ | ~~{it.files}~~ | {new_desc} |"
     elif new_status == "open":
-        new_line = f"| {it.id} | {it.files} | {it.severity} | {new_desc} |"
+        new_line = f"| {it.id} | {it.files} | {new_desc} |"
     else:
         return f"unknown status: {new_status!r} (use in_progress / done / open)"
 
@@ -381,14 +377,13 @@ server = Server("backlog")
 TOOLS: list[tuple[str, str, dict, Any]] = [
     (
         "list_items",
-        "Filter open backlog items. Combine status/section/severity/score filters. "
+        "Filter backlog items. Combine status/section/score filters. "
         "Returns one line per match.",
         {
             "type": "object",
             "properties": {
                 "status": {"type": "string", "enum": ["open", "in_progress", "done", "all"]},
                 "section": {"type": "string"},
-                "severity": {"type": "string"},
                 "ready": {"type": "string", "enum": ["Y", "N", "partial"]},
                 "max_complexity": {"type": "integer", "minimum": 1, "maximum": 5},
                 "min_value": {"type": "integer", "minimum": 1, "maximum": 5},
@@ -400,7 +395,7 @@ TOOLS: list[tuple[str, str, dict, Any]] = [
     ),
     (
         "get_item",
-        "Fetch a single backlog item with full description, files, severity, score, and section.",
+        "Fetch a single backlog item with full description, files, score, and section.",
         {"type": "object", "properties": {"id": {"type": "integer"}}, "required": ["id"]},
         tool_get_item,
     ),
@@ -443,10 +438,9 @@ TOOLS: list[tuple[str, str, dict, Any]] = [
                     "description": "Section heading. Defaults to 'Inbox'. Use 'Section → Subsection' for nested.",
                 },
                 "files": {"type": "string"},
-                "severity": {"type": "string"},
                 "description": {"type": "string"},
             },
-            "required": ["files", "severity", "description"],
+            "required": ["files", "description"],
         },
         tool_add_item,
     ),

@@ -12,14 +12,13 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
-ROW_RE = re.compile(r"^\| (~~)?(\d+)(~~)? \| (.*?) \| (.*?) \| (.*) \|$")
+ROW_RE = re.compile(r"^\| (~~)?(\d+)(~~)? \| (.*?) \| (.*) \|$")
 
 
 @dataclass
 class Item:
     id: int
     files: str
-    severity: str
     description: str
     section: str            # `## ` heading
     subsection: str | None  # `### ` heading, if any
@@ -64,13 +63,11 @@ def parse_backlog_text(text: str, archive_section_prefix: str = "Done") -> list[
             continue
         id_ = int(m.group(2))
         files = m.group(4).replace("~~", "").strip()
-        severity = m.group(5).replace("~~", "").strip()
-        description = m.group(6).strip()
+        description = m.group(5).strip()
         in_progress = "IN PROGRESS" in description and not archived
         items.append(Item(
             id=id_,
             files=files,
-            severity=severity,
             description=description,
             section=section,
             subsection=subsection,

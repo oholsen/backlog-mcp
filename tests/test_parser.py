@@ -32,12 +32,11 @@ def test_parse_backlog_counts_and_status():
     assert by_id[5].in_progress is False  # archived overrides in_progress
 
 
-def test_parse_backlog_files_and_severity_unstrike():
+def test_parse_backlog_files_unstrike():
     items = parse_backlog(FIXTURES / "small-backlog.md")
     by_id = index_by_id(items)
-    # Strikethrough markers stripped from files / severity
+    # Strikethrough markers stripped from files
     assert by_id[5].files == "src/e.rs"
-    assert by_id[5].severity == "Low"
 
 
 def test_parse_scores_handles_comments_and_lists():

@@ -23,17 +23,17 @@ all keep working. Agents call structured tools instead of regex-editing prose.
 Plain markdown table rows with this column shape:
 
 ```markdown
-| # | File | Severity | Description |
-|---|---|---|---|
-| 12 | src/auth/session.py | High | **Session token not rotated after privilege escalation.** Rotate on role change. |
-| ~~3~~ | ~~src/api/routes.py~~ | ~~Medium~~ | **DONE (PR #41, 2026-03-15).** Rate-limit login endpoint. |
+| # | File | Description |
+|---|---|---|
+| 12 | src/auth/session.py | **Session token not rotated after privilege escalation.** Rotate on role change. |
+| ~~3~~ | ~~src/api/routes.py~~ | **DONE (PR #41, 2026-03-15).** Rate-limit login endpoint. |
 ```
 
 Conventions the server understands:
 
-- **Open**: `| <id> | <files> | <severity> | <description> |`
+- **Open**: `| <id> | <files> | <description> |`
 - **In progress**: description starts with `**IN PROGRESS (branch-name)**`
-- **Done**: id/files/severity strikethroughed (`~~…~~`), description starts with `**DONE …**`
+- **Done**: id/files strikethroughed (`~~…~~`), description starts with `**DONE …**`
 - **Archive**: rows under a `## Done — archive` heading (configurable prefix)
 
 Sections are `## ` headings; subsections are `### `.
@@ -44,6 +44,7 @@ Sections are `## ` headings; subsections are `### `.
 
 ```csv
 id,complexity,value,ready,blocked_by,tags,notes
+# complexity and value: 1 (low) – 5 (high); net priority ≈ value / complexity
 12,2,4,Y,,auth;security,session not rotated after privilege escalation
 ```
 
