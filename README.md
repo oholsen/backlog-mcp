@@ -118,7 +118,8 @@ Wire sessions to it instead of spawning per-session stdio processes:
 {
   "mcpServers": {
     "backlog": {
-      "url": "http://localhost:8765/mcp"
+      "type": "http",
+      "url": "http://localhost:8765/mcp/"
     }
   }
 }
