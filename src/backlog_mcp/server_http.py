@@ -132,7 +132,7 @@ async def _dispatch(name: str, args: dict[str, Any]) -> str:
     if name in _WRITE_HANDLERS:
         async with _write_lock:
             result = _WRITE_HANDLERS[name](args)
-            if _is_write_success(result):
+            if _is_write_success(result) and os.environ.get("BACKLOG_AGENT_AUTOCOMMIT") == "1":
                 try:
                     commit_and_push(REPO_ROOT, f"backlog: {name}")
                 except Exception as e:
@@ -148,8 +148,7 @@ async def _dispatch(name: str, args: dict[str, Any]) -> str:
 
 session_manager = StreamableHTTPSessionManager(
     app=server,
-    stateless=False,
-    session_idle_timeout=1800,
+    stateless=True,
 )
 
 
@@ -160,7 +159,7 @@ async def _lifespan(app: Starlette) -> AsyncIterator[None]:
 
 
 starlette_app = Starlette(
-    routes=[Mount("/mcp", app=session_manager.handle_request)],
+    routes=[Mount("/mcp/", app=session_manager.handle_request)],
     lifespan=_lifespan,
 )
 

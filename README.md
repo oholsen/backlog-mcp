@@ -108,6 +108,7 @@ backlog-agent          # listens on 127.0.0.1:8765 by default
 |---|---|---|
 | `BACKLOG_AGENT_HOST` | `127.0.0.1` | Bind address |
 | `BACKLOG_AGENT_PORT` | `8765` | Bind port |
+| `BACKLOG_AGENT_AUTOCOMMIT` | unset | Set to `1` to git-commit and push after each successful write |
 | `ANTHROPIC_API_KEY` | — | Required for the `query` tool only |
 | `BACKLOG_AGENT_MODEL` | `claude-sonnet-4-6` | Claude model for `query` |
 
