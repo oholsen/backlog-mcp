@@ -7,13 +7,15 @@ the whole file into context.
 Configuration is environment-driven so the server can serve any project's
 backlog without code changes:
 
-    BACKLOG_PATH         Path to the markdown backlog (default: docs/Backlog.md)
-    BACKLOG_SCORES       Path to the scoring CSV; optional, scoring tools no-op
-                         if unset or missing (default: docs/Backlog-Scores.csv)
-    BACKLOG_REPO_ROOT    Repo root for git operations (default: parent of backlog;
-                         falls back to `git rev-parse --show-toplevel`)
+    BACKLOG_PATH            Path to the markdown backlog (default: docs/Backlog.md)
+    BACKLOG_SCORES          Path to the scoring CSV; optional, scoring tools no-op
+                            if unset or missing (default: docs/Backlog-Scores.csv)
+    BACKLOG_REPO_ROOT       Repo root for git operations (default: parent of backlog;
+                            falls back to `git rev-parse --show-toplevel`)
     BACKLOG_ARCHIVE_PREFIX  Prefix that identifies the archive `## ` heading
                             (default: "Done", matching `## Done — archive`)
+    BACKLOG_CHANGELOG_INBOX Path to the CHANGELOG-INBOX append buffer
+                            (default: CHANGELOG-INBOX.md at repo root)
 """
 
 from __future__ import annotations
@@ -67,6 +69,9 @@ BACKLOG_PATH = Path(os.environ.get("BACKLOG_PATH", "docs/Backlog.md")).resolve()
 SCORES_PATH = Path(os.environ.get("BACKLOG_SCORES", "docs/Backlog-Scores.csv")).resolve()
 ARCHIVE_PREFIX = os.environ.get("BACKLOG_ARCHIVE_PREFIX", "Done")
 REPO_ROOT = _resolve_repo_root(BACKLOG_PATH)
+CHANGELOG_INBOX_PATH = Path(
+    os.environ.get("BACKLOG_CHANGELOG_INBOX", str(REPO_ROOT / "CHANGELOG-INBOX.md"))
+).resolve()
 
 
 def _items() -> tuple[list[Item], dict[int, Item]]:
@@ -281,6 +286,8 @@ def tool_update_status(args: dict[str, Any]) -> str:
     new_status = args["status"].lower()
     branch = args.get("branch")
     summary = args.get("summary")
+    pr = args.get("pr")
+    changelog = bool(args.get("changelog", False))
 
     text = BACKLOG_PATH.read_text()
     _, by_id = _items()
@@ -311,7 +318,24 @@ def tool_update_status(args: dict[str, Any]) -> str:
     if not ok:
         BACKLOG_PATH.write_text(text)
         return f"update_status rolled back; lint failed:\n{msg}"
-    return f"#{id_} status set to {new_status}"
+
+    changelog_note = ""
+    if new_status == "done" and changelog and summary:
+        if CHANGELOG_INBOX_PATH.is_file():
+            pr_ref = f" (PR #{pr})" if pr else ""
+            inbox_line = f"- **#{id_}{pr_ref}:** {summary.rstrip('.')}.\n"
+            inbox_text = CHANGELOG_INBOX_PATH.read_text()
+            marker = "<!-- append new DONE lines below this line -->"
+            if marker in inbox_text:
+                inbox_text = inbox_text.replace(marker, marker + "\n" + inbox_line.rstrip("\n"), 1)
+            else:
+                inbox_text = inbox_text.rstrip("\n") + "\n" + inbox_line
+            CHANGELOG_INBOX_PATH.write_text(inbox_text)
+            changelog_note = "; appended to CHANGELOG-INBOX"
+        else:
+            changelog_note = "; CHANGELOG-INBOX not found — skipped"
+
+    return f"#{id_} status set to {new_status}{changelog_note}"
 
 
 def tool_set_score(args: dict[str, Any]) -> str:
@@ -446,14 +470,18 @@ TOOLS: list[tuple[str, str, dict, Any]] = [
     ),
     (
         "update_status",
-        "Flip an item to in_progress / done / open. For in_progress, branch is required.",
+        "Flip an item to in_progress / done / open. For in_progress, branch is required. "
+        "For done, set changelog=true and provide summary to append to CHANGELOG-INBOX "
+        "(externally-observable changes only — skip for refactors and internal fixes).",
         {
             "type": "object",
             "properties": {
                 "id": {"type": "integer"},
                 "status": {"type": "string", "enum": ["in_progress", "done", "open"]},
                 "branch": {"type": "string"},
-                "summary": {"type": "string"},
+                "summary": {"type": "string", "description": "Brief summary for DONE marker and CHANGELOG-INBOX entry"},
+                "pr": {"type": "integer", "description": "PR number for CHANGELOG-INBOX entry"},
+                "changelog": {"type": "boolean", "description": "Append to CHANGELOG-INBOX (externally-observable changes only)"},
             },
             "required": ["id", "status"],
         },
