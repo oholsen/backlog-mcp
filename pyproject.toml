@@ -17,18 +17,22 @@ classifiers = [
 ]
 dependencies = [
   "mcp>=1.0.0",
+  "starlette",
+  "uvicorn",
 ]
+
+[project.optional-dependencies]
+agent = ["anthropic>=0.40"]
+dev   = ["pytest>=7"]
 
 [project.urls]
 Homepage = "https://github.com/oholsen/backlog-mcp"
 Issues   = "https://github.com/oholsen/backlog-mcp/issues"
 
 [project.scripts]
-backlog-mcp  = "backlog_mcp.server:run"
-backlog-lint = "backlog_mcp.lint:main"
-
-[project.optional-dependencies]
-dev = ["pytest>=7"]
+backlog-mcp   = "backlog_mcp.server:run"
+backlog-agent = "backlog_mcp.server_http:run"
+backlog-lint  = "backlog_mcp.lint:main"
 
 [build-system]
 requires = ["setuptools>=61"]

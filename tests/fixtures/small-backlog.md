@@ -6,20 +6,20 @@ Open items.
 
 | # | File | Severity | Description |
 |---|---|---|---|
-| 1 | src/a.rs | Low | **First item.** Body text. |
-| 2 | src/b.rs | High | **IN PROGRESS (feat-2)** **Second item, in flight.** Body. |
+| 1 | src/backlog_mcp/server.py | Low | **Add list_sections subsection counts.** Break down open items per subsection, not just per top-level section. |
+| 2 | src/backlog_mcp/server.py | High | **IN PROGRESS (feat-2)** **Serialise concurrent writes with asyncio lock.** Two stdio sessions racing on the same file corrupt the backlog. |
 
 ### Subsection X
 
 | # | File | Severity | Description |
 |---|---|---|---|
-| 3 | src/c.rs | Medium | **Third item.** |
+| 3 | src/backlog_mcp/lint.py | Medium | **Cross-reference validation.** Distinguish `(PR #2)` citations from natural-language `#` uses. |
 
 ## Section B
 
 | # | File | Severity | Description |
 |---|---|---|---|
-| 10 | src/d.rs | Low | **Tenth.** |
+| 10 | src/backlog_mcp/parser.py | Low | **Handle multi-file cell values.** Parser splits on `,` but paths with commas in names break the split. |
 
 ## Done — archive
 

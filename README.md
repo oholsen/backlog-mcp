@@ -25,8 +25,8 @@ Plain markdown table rows with this column shape:
 ```markdown
 | # | File | Severity | Description |
 |---|---|---|---|
-| 627 | src/main.rs | High | **Sensor crash on missing capture interface.** Detect early; exit cleanly. |
-| ~~16~~ | ~~src/device.rs~~ | ~~Minor~~ | **DONE (PR #227, 2026-04-27).** … |
+| 12 | src/auth/session.py | High | **Session token not rotated after privilege escalation.** Rotate on role change. |
+| ~~3~~ | ~~src/api/routes.py~~ | ~~Medium~~ | **DONE (PR #41, 2026-03-15).** Rate-limit login endpoint. |
 ```
 
 Conventions the server understands:
@@ -44,7 +44,7 @@ Sections are `## ` headings; subsections are `### `.
 
 ```csv
 id,complexity,value,ready,blocked_by,tags,notes
-627,2,4,Y,,infra;customer-facing,sensor crash on missing iface
+12,2,4,Y,,auth;security,session not rotated after privilege escalation
 ```
 
 - `complexity`, `value`: 1–5
@@ -63,10 +63,17 @@ pip install git+https://github.com/oholsen/backlog-mcp
 
 (Once published to PyPI: `pip install backlog-mcp`.)
 
-This installs two console scripts:
+This installs three console scripts:
 
-- `backlog-mcp` — the MCP server
+- `backlog-mcp` — the stdio MCP server (one process per session)
+- `backlog-agent` — the HTTP MCP server (shared, single-writer; see below)
 - `backlog-lint` — the hygiene CLI
+
+For the `query` tool install the `agent` extra:
+
+```sh
+pip install 'git+https://github.com/oholsen/backlog-mcp[agent]'
+```
 
 ## Configuration
 
@@ -80,7 +87,43 @@ without code changes:
 | `BACKLOG_REPO_ROOT` | `git rev-parse --show-toplevel` | Repo root for `git grep` / branch checks |
 | `BACKLOG_ARCHIVE_PREFIX` | `Done` | Prefix matching the archive `## ` heading |
 
-## Wire to Claude Code / Gemini CLI
+## backlog-agent — shared HTTP server
+
+For teams or when multiple agent sessions share the same backlog repo,
+`backlog-agent` runs as a single long-running process:
+
+- **Single writer** — an `asyncio` lock serialises all writes; no file races.
+- **Auto-commit** — each successful write is committed and pushed.
+- **`query` tool** — natural-language questions answered by an embedded Claude
+  call with the full backlog in context (e.g. "what are the top auth items?").
+
+```sh
+BACKLOG_PATH=docs/Backlog.md \
+BACKLOG_REPO_ROOT=. \
+ANTHROPIC_API_KEY=sk-... \
+backlog-agent          # listens on 127.0.0.1:8765 by default
+```
+
+| Env var | Default | Purpose |
+|---|---|---|
+| `BACKLOG_AGENT_HOST` | `127.0.0.1` | Bind address |
+| `BACKLOG_AGENT_PORT` | `8765` | Bind port |
+| `ANTHROPIC_API_KEY` | — | Required for the `query` tool only |
+| `BACKLOG_AGENT_MODEL` | `claude-sonnet-4-6` | Claude model for `query` |
+
+Wire sessions to it instead of spawning per-session stdio processes:
+
+```json
+{
+  "mcpServers": {
+    "backlog": {
+      "url": "http://localhost:8765/mcp"
+    }
+  }
+}
+```
+
+## Wire to Claude Code / Gemini CLI (stdio)
 
 Drop a `.mcp.json` at your project root:
 
@@ -122,6 +165,12 @@ the first time.
 | `update_status` | Flip in_progress / done / open; requires `branch` for in_progress |
 | `set_score` | Insert or update a row in the scoring CSV |
 
+### Reasoning (`backlog-agent` only)
+
+| Tool | What it does |
+|---|---|
+| `query` | Natural-language question answered by Claude with the full backlog in context. Requires `ANTHROPIC_API_KEY`. |
+
 `add_item` expects a `## Inbox` section in the backlog (above `## Done — archive`)
 when no explicit section is given. Mirrors the `CHANGELOG-INBOX → CHANGELOG`
 buffer pattern: file fast, curate periodically. If you don't want this flow,
@@ -153,11 +202,10 @@ CI usage (GitHub Actions):
 
 ## Limitations
 
-- **Concurrent edits.** Two agents writing simultaneously will race. v1 has no
-  file lock; rely on session-level coordination until this becomes a real
-  problem.
+- **Concurrent edits (stdio).** Two `backlog-mcp` stdio processes writing
+  simultaneously will race. Use `backlog-agent` (HTTP) for shared access.
 - **Move-to-archive.** `update_status status=done` flips the row in place but
-  doesn't relocate to the archive section. Periodic manual sweep covers it.
+  doesn't relocate it to the archive section. Periodic manual sweep covers it.
 - **Cross-reference checking.** Currently deferred — prose mixes "(PRs #X, #Y)"
   groups, "Agents.md #6" anchors, and "the #1 finding" with real refs; needs a
   smarter parser than is currently warranted.

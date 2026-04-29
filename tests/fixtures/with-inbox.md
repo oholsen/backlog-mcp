@@ -4,8 +4,8 @@
 
 | # | File | Severity | Description |
 |---|---|---|---|
-| 1 | src/a.rs | Low | First. |
-| 2 | src/b.rs | High | Second. |
+| 1 | src/backlog_mcp/server.py | Low | Add list_sections subsection counts. |
+| 2 | src/backlog_mcp/server.py | High | Serialise concurrent writes with asyncio lock. |
 
 ## Inbox
 
