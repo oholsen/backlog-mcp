@@ -1,9 +1,10 @@
 """Backlog hygiene lint — pure-Python port of the original bash script.
 
-Three checks:
+Four checks:
   1. Duplicate IDs across the whole file (open + archive)
   2. Unresolved git merge-conflict markers
-  3. Stale `IN PROGRESS (branch-name)` markers where the branch no longer
+  3. Unclosed table rows (blank line inside a cell breaks the parser)
+  4. Stale `IN PROGRESS (branch-name)` markers where the branch no longer
      exists on origin (typically a merged-and-deleted PR)
 
 Cross-reference checking is deferred — the prose mixes "(PRs #X, #Y)" groups,
@@ -76,7 +77,16 @@ def lint_file(
         if _CONFLICT.match(line):
             errors.append(f"unresolved conflict marker on line {ln}: {line.strip()[:60]}")
 
-    # 3. Stale IN PROGRESS markers
+    # 3. Multi-line table rows — a blank line immediately after a row that doesn't
+    #    close with | means the cell content spills across lines, breaking the parser.
+    for ln, line in enumerate(lines, start=1):
+        if _ROW_ID.match(line) and not line.rstrip().endswith("|"):
+            errors.append(
+                f"unclosed table row on line {ln} (blank line inside cell?): "
+                f"{line.strip()[:60]}…"
+            )
+
+    # 4. Stale IN PROGRESS markers
     if not skip_branch_check:
         if repo_root is None:
             repo_root = backlog_path.parent.parent  # best-effort default
