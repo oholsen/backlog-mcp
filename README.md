@@ -88,6 +88,54 @@ without code changes:
 | `BACKLOG_REPO_ROOT` | `git rev-parse --show-toplevel` | Repo root for `git grep` / branch checks |
 | `BACKLOG_ARCHIVE_PREFIX` | `Done` | Prefix matching the archive `## ` heading |
 
+## Multi-agent workflow
+
+```
+                       git repository
+                       ──────────────
+         ┌─────────────────────────────────────────────────┐
+         │                                                 │
+         │  worktree: main        worktree: feat/auth      │
+         │  ┌──────────────┐      ┌──────────────────┐     │
+         │  │ Backlog.md   │      │ src/auth/…       │     │
+         │  │ Backlog-     │      │ tests/auth/…     │     │
+         │  │  Scores.csv  │      └──────────────────┘     │
+         │  └──────┬───────┘                               │
+         │         │              worktree: feat/api        │
+         │         │              ┌──────────────────┐     │
+         │         │              │ src/api/…        │     │
+         │         │              │ tests/api/…      │     │
+         └─────────┼──────────────┴──────────────────┴─────┘
+                   │ reads / writes
+                   ▼
+         ┌─────────────────────┐
+         │    backlog-agent    │   HTTP :8765
+         │    (single writer,  │   ◄──────────────────────┐
+         │     auto-commit)    │                          │
+         └─────────────────────┘                   MCP tool calls
+
+              Agent A                 Agent B                 Agent C
+          ┌───────────────┐      ┌───────────────┐      ┌───────────────┐
+          │ session: main │      │ feat/auth     │      │ feat/api      │
+          │               │      │               │      │               │
+          │ context:      │      │ context:      │      │ context:      │
+          │ • full repo   │      │ • auth files  │      │ • api files   │
+          │ • backlog     │      │ • backlog     │      │ • backlog     │
+          │ • scores CSV  │      │ • scores CSV  │      │ • scores CSV  │
+          │               │      │               │      │               │
+          │ asks:         │      │ asks:         │      │ asks:         │
+          │ • top priority│      │ • next item   │      │ • sequencing  │
+          │ • value /     │      │   touching    │      │   — which     │
+          │   complexity  │      │   auth files  │      │   items share │
+          │   ranking     │      │ • blocked_by  │      │   api files?  │
+          │ • what's      │      │   resolution  │      │ • file-level  │
+          │   ready now?  │      │   order       │      │   conflict    │
+          └───────┬───────┘      └───────┬───────┘      └───────┬───────┘
+                  └──────────────────────┴──────────────────────┘
+                                         │
+                                    HTTP :8765
+```
+
 ## backlog-agent — shared HTTP server
 
 For teams or when multiple agent sessions share the same backlog repo,
