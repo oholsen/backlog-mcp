@@ -161,7 +161,10 @@ backlog-agent          # listens on 127.0.0.1:8765 by default
 | `ANTHROPIC_API_KEY` | — | Required for the `query` tool only |
 | `BACKLOG_AGENT_MODEL` | `claude-sonnet-4-6` | Claude model for `query` |
 
-Wire sessions to it instead of spawning per-session stdio processes:
+Wire each session to it instead of spawning per-session stdio processes. Two
+files per worktree:
+
+**`.mcp.json`** at the worktree root — declares the server:
 
 ```json
 {
@@ -173,6 +176,18 @@ Wire sessions to it instead of spawning per-session stdio processes:
   }
 }
 ```
+
+**`.claude/settings.json`** — opts the project in to the HTTP server (Claude
+Code requires explicit activation for HTTP MCP servers):
+
+```json
+{
+  "enabledMcpjsonServers": ["backlog"]
+}
+```
+
+Without `enabledMcpjsonServers` the `.mcp.json` entry is ignored even when the
+agent is running.
 
 ## Wire to Claude Code / Gemini CLI (stdio)
 
