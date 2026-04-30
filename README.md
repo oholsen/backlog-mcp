@@ -211,7 +211,7 @@ docs/ audience buckets, customer-facing doc lifecycle):
 new items, IN PROGRESS flips, DONE flips, and CHANGELOG-INBOX entries. Invoke
 it via the Agent tool with a plain-English instruction (e.g. "mark #677 DONE,
 PR #264, 2026-04-29"). The agent handles ID assignment, collision checks, and
-CHANGELOG-INBOX appends. It only operates on `main` / `main-docs` — never on
+CHANGELOG-INBOX appends. It only operates on `main` — never on
 feature branches.
 
 ## Worktree Pre-Flight (before `EnterWorktree`)
