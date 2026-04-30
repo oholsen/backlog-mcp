@@ -7,9 +7,9 @@ the whole file into context.
 Configuration is environment-driven so the server can serve any project's
 backlog without code changes:
 
-    BACKLOG_PATH            Path to the markdown backlog (default: docs/Backlog.md)
+    BACKLOG_PATH            Path to the markdown backlog (default: Backlog.md)
     BACKLOG_SCORES          Path to the scoring CSV; optional, scoring tools no-op
-                            if unset or missing (default: docs/Backlog-Scores.csv)
+                            if unset or missing (default: Backlog-Scores.csv next to BACKLOG_PATH)
     BACKLOG_REPO_ROOT       Repo root for git operations (default: parent of backlog;
                             falls back to `git rev-parse --show-toplevel`)
     BACKLOG_ARCHIVE_PREFIX  Prefix that identifies the archive `## ` heading
@@ -65,8 +65,8 @@ def _resolve_repo_root(backlog_path: Path) -> Path:
         return backlog_path.parent.parent
 
 
-BACKLOG_PATH = Path(os.environ.get("BACKLOG_PATH", "docs/Backlog.md")).resolve()
-SCORES_PATH = Path(os.environ.get("BACKLOG_SCORES", "docs/Backlog-Scores.csv")).resolve()
+BACKLOG_PATH = Path(os.environ.get("BACKLOG_PATH", "Backlog.md")).resolve()
+SCORES_PATH = Path(os.environ.get("BACKLOG_SCORES", BACKLOG_PATH.parent / "Backlog-Scores.csv")).resolve()
 ARCHIVE_PREFIX = os.environ.get("BACKLOG_ARCHIVE_PREFIX", "Done")
 REPO_ROOT = _resolve_repo_root(BACKLOG_PATH)
 CHANGELOG_INBOX_PATH = Path(

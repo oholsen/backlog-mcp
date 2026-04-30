@@ -139,8 +139,8 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Backlog hygiene lint")
     parser.add_argument(
         "--backlog",
-        default=os.environ.get("BACKLOG_PATH", "docs/Backlog.md"),
-        help="path to Backlog.md (default: $BACKLOG_PATH or docs/Backlog.md)",
+        default=os.environ.get("BACKLOG_PATH", "Backlog.md"),
+        help="path to Backlog.md (default: $BACKLOG_PATH or Backlog.md)",
     )
     parser.add_argument(
         "--repo-root",

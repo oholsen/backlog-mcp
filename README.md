@@ -83,8 +83,8 @@ without code changes:
 
 | Env var | Default | Purpose |
 |---|---|---|
-| `BACKLOG_PATH` | `docs/Backlog.md` | Markdown backlog |
-| `BACKLOG_SCORES` | `docs/Backlog-Scores.csv` | Scoring CSV (optional; tools no-op if missing) |
+| `BACKLOG_PATH` | `Backlog.md` | Markdown backlog |
+| `BACKLOG_SCORES` | `Backlog-Scores.csv` next to `BACKLOG_PATH` | Scoring CSV (optional; tools no-op if missing) |
 | `BACKLOG_REPO_ROOT` | `git rev-parse --show-toplevel` | Repo root for `git grep` / branch checks |
 | `BACKLOG_ARCHIVE_PREFIX` | `Done` | Prefix matching the archive `## ` heading |
 
@@ -99,7 +99,7 @@ For teams or when multiple agent sessions share the same backlog repo,
   call with the full backlog in context (e.g. "what are the top auth items?").
 
 ```sh
-BACKLOG_PATH=docs/Backlog.md \
+BACKLOG_PATH=Backlog.md \
 BACKLOG_REPO_ROOT=. \
 ANTHROPIC_API_KEY=sk-... \
 backlog-agent          # listens on 127.0.0.1:8765 by default
@@ -136,8 +136,7 @@ Drop a `.mcp.json` at your project root:
     "backlog": {
       "command": "backlog-mcp",
       "env": {
-        "BACKLOG_PATH": "docs/Backlog.md",
-        "BACKLOG_SCORES": "docs/Backlog-Scores.csv"
+        "BACKLOG_PATH": "Backlog.md"
       }
     }
   }
@@ -182,7 +181,7 @@ pass an explicit `section` argument on every call.
 ## CLI: `backlog-lint`
 
 ```sh
-backlog-lint                          # uses BACKLOG_PATH or docs/Backlog.md
+backlog-lint                          # uses BACKLOG_PATH or Backlog.md
 backlog-lint --backlog path/to/X.md
 backlog-lint --skip-branch-check      # no network; skip stale-marker check
 ```
