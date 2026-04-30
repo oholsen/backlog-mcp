@@ -410,7 +410,7 @@ TOOLS: list[tuple[str, str, dict, Any]] = [
             "type": "object",
             "properties": {
                 "status": {"type": "string", "enum": ["open", "in_progress", "done", "all"]},
-                "section": {"type": "string"},
+                "section": {"type": "string", "description": "Substring match against section/subsection name — e.g. 'topology' matches '## Epic: Network Topology & Segmentation'. Use list_sections to see available names."},
                 "ready": {"type": "string", "enum": ["Y", "N", "partial"]},
                 "max_complexity": {"type": "integer", "minimum": 1, "maximum": 5},
                 "min_value": {"type": "integer", "minimum": 1, "maximum": 5},
