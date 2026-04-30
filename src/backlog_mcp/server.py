@@ -99,6 +99,7 @@ def tool_list_items(args: dict[str, Any]) -> str:
     max_c = args.get("max_complexity")
     min_v = args.get("min_value")
     tag_filter = args.get("tag")
+    files_filter = args.get("files")
     limit = int(args.get("limit") or 50)
 
     out: list[str] = []
@@ -112,6 +113,8 @@ def tool_list_items(args: dict[str, Any]) -> str:
         if section_filter and section_filter.lower() not in (
             it.section + " " + (it.subsection or "")
         ).lower():
+            continue
+        if files_filter and files_filter.lower() not in it.files.lower():
             continue
         sc = scores.get(it.id)
         if ready_filter:
@@ -401,7 +404,7 @@ server = Server("backlog")
 TOOLS: list[tuple[str, str, dict, Any]] = [
     (
         "list_items",
-        "Filter backlog items. Combine status/section/score filters. "
+        "Filter backlog items. Combine status/section/score/files filters. "
         "Returns one line per match.",
         {
             "type": "object",
@@ -412,6 +415,7 @@ TOOLS: list[tuple[str, str, dict, Any]] = [
                 "max_complexity": {"type": "integer", "minimum": 1, "maximum": 5},
                 "min_value": {"type": "integer", "minimum": 1, "maximum": 5},
                 "tag": {"type": "string"},
+                "files": {"type": "string", "description": "Substring match against the files column — e.g. 'src/auth/' to find items touching that path."},
                 "limit": {"type": "integer", "default": 50},
             },
         },

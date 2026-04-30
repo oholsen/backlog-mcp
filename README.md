@@ -194,13 +194,59 @@ Drop a `.mcp.json` at your project root:
 Claude Code picks this up on session start; it'll prompt to approve the server
 the first time.
 
+### Sample CLAUDE.md
+
+Tell Claude Code how to use the backlog by adding a `CLAUDE.md` at your repo root. A real-world example from a multi-worktree Rust project:
+
+```markdown
+## Documentation Policy
+
+Backlog.md lives at the repo root. It is managed exclusively on `main` — never
+on worktrees or feature branches. Full rules (ID assignment, CHANGELOG flow,
+docs/ audience buckets, customer-facing doc lifecycle):
+**[`docs/process/Docs-Policy.md`](docs/process/Docs-Policy.md)**.
+
+**Backlog keeper agent:** Use the `backlog-keeper` subagent
+(`.claude/agents/backlog-keeper.md`) for all mechanical Backlog.md edits —
+new items, IN PROGRESS flips, DONE flips, and CHANGELOG-INBOX entries. Invoke
+it via the Agent tool with a plain-English instruction (e.g. "mark #677 DONE,
+PR #264, 2026-04-29"). The agent handles ID assignment, collision checks, and
+CHANGELOG-INBOX appends. It only operates on `main` / `main-docs` — never on
+feature branches.
+
+## Worktree Pre-Flight (before `EnterWorktree`)
+
+Always run the pre-flight checklist before creating a worktree.
+
+Short version:
+1. Check for conflicts: `grep "IN PROGRESS" Backlog.md`.
+2. Mark your items `**IN PROGRESS (branch-name)**` on `main` (unstaged) — or
+   invoke the `backlog-keeper` agent: "mark #NNN in progress on branch-name".
+3. Create the worktree at `~/src/worktrees/<branch-name>` (not inside the
+   workspace).
+
+## Worktree Lifecycle
+
+After merge:
+1. `gh pr merge <N> --squash`
+2. `git worktree remove ~/src/worktrees/<branch>`
+3. `git branch -d <branch-name> && git pull`
+4. Flip IN PROGRESS → DONE via the backlog-keeper agent.
+```
+
+The key patterns this illustrates:
+
+- **Dedicated subagent** for backlog edits keeps mechanical writes off the main session context.
+- **main-only rule** — `Backlog.md` lives on `main`; worktree sessions query via MCP but never edit the file directly.
+- **Pre-flight + lifecycle hooks** baked into CLAUDE.md so the agent enforces the workflow without user prompting.
+
 ## Tools
 
 ### Read (Phase 1)
 
 | Tool | What it does |
 |---|---|
-| `list_items` | Filter open items by status / section / severity / score / tag |
+| `list_items` | Filter open items by status / section / score / tag / **files** (substring match against the files column) |
 | `get_item` | Full description + score + status for one item |
 | `get_score` | Score row only (cheap pre-filter) |
 | `find_refs` | `git grep` for `#<id>` across the whole repo |
