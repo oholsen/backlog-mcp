@@ -44,6 +44,7 @@ from .server import (
     tool_lint,
     tool_list_items,
     tool_list_sections,
+    tool_next_id,
     tool_set_score,
     tool_update_status,
 )
@@ -69,6 +70,7 @@ _READ_HANDLERS: dict[str, Any] = {
     "find_refs": tool_find_refs,
     "list_sections": tool_list_sections,
     "lint": tool_lint,
+    "next_id": tool_next_id,
 }
 
 _FAILURE_INDICATORS = ("rolled back", "not found", "failed", "required", "unknown status", "heading not found")
