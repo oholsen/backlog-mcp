@@ -235,6 +235,10 @@ def _next_free_id() -> int:
     return (max((it.id for it in items), default=0)) + 1
 
 
+def tool_next_id(_args: dict[str, Any]) -> str:
+    return str(_next_free_id())
+
+
 def _verify_with_lint() -> tuple[bool, str]:
     result = lint_file(BACKLOG_PATH, repo_root=REPO_ROOT, skip_branch_check=True)
     return result.ok, result.summary()
@@ -259,9 +263,13 @@ def tool_add_item(args: dict[str, Any]) -> str:
     else:
         anchor = f"## {section}"
 
-    idx = text.find(anchor)
-    if idx == -1:
+    # Match anchor only at the start of a line to avoid hitting the same text
+    # in prose or table cells.
+    anchor_re = re.compile(r"^" + re.escape(anchor) + r"(?:\s|$)", re.MULTILINE)
+    m = anchor_re.search(text)
+    if not m:
         return f"Section heading not found: {anchor!r}"
+    idx = m.start()
 
     rest = text[idx:]
     next_section = re.search(r"\n(?=## |### )", rest[len(anchor):])
@@ -451,6 +459,12 @@ TOOLS: list[tuple[str, str, dict, Any]] = [
         "Run the hygiene lint and return its findings.",
         {"type": "object", "properties": {"skip_branch_check": {"type": "boolean", "default": False}}},
         tool_lint,
+    ),
+    (
+        "next_id",
+        "Return the next free item ID without creating anything.",
+        {"type": "object", "properties": {}},
+        tool_next_id,
     ),
     (
         "add_item",
