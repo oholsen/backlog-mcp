@@ -64,14 +64,17 @@ def parse_backlog_text(text: str, archive_section_prefix: str = "Done") -> list[
         id_ = int(m.group(2))
         files = m.group(4).replace("~~", "").strip()
         description = m.group(5).strip()
-        in_progress = "IN PROGRESS" in description and not archived
+        # A row is archived if it's under a Done section OR if the id cell is
+        # struck through (update_status writes ~~id~~ when marking done in-place).
+        row_archived = archived or m.group(1) == "~~"
+        in_progress = "IN PROGRESS" in description and not row_archived
         items.append(Item(
             id=id_,
             files=files,
             description=description,
             section=section,
             subsection=subsection,
-            archived=archived,
+            archived=row_archived,
             in_progress=in_progress,
             raw_line=line,
         ))
