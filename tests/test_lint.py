@@ -43,3 +43,78 @@ def test_missing_file_fails(tmp_path):
     result = lint_file(tmp_path / "nonexistent.md", skip_branch_check=True)
     assert not result.ok
     assert any("not readable" in e for e in result.errors)
+
+
+def test_blank_line_in_table_warns(tmp_path):
+    target = tmp_path / "Backlog.md"
+    target.write_text(
+        "## Inbox\n\n"
+        "| # | File | Description |\n"
+        "|---|---|---|\n"
+        "| 1 | x | First. |\n"
+        "\n"
+        "| 2 | y | Second. |\n"
+    )
+    result = lint_file(target, repo_root=tmp_path, skip_branch_check=True)
+    assert any("blank line inside table" in w for w in result.warnings), result.warnings
+
+
+def test_heading_flush_against_row_warns(tmp_path):
+    target = tmp_path / "Backlog.md"
+    target.write_text(
+        "## Inbox\n\n"
+        "| # | File | Description |\n"
+        "|---|---|---|\n"
+        "| 1 | x | Row. |\n"
+        "## Next Section\n"
+    )
+    result = lint_file(target, repo_root=tmp_path, skip_branch_check=True)
+    assert any("flush against prior table row" in w for w in result.warnings), result.warnings
+
+
+def test_missing_table_header_warns(tmp_path):
+    target = tmp_path / "Backlog.md"
+    target.write_text(
+        "## Inbox\n\n"
+        "Some prose.\n\n"
+        "| 1 | x | Row without header. |\n"
+    )
+    result = lint_file(target, repo_root=tmp_path, skip_branch_check=True)
+    assert any("missing header" in w for w in result.warnings), result.warnings
+
+
+def test_fix_repairs_blank_in_table_and_heading_flush(tmp_path):
+    target = tmp_path / "Backlog.md"
+    target.write_text(
+        "## Inbox\n\n"
+        "| # | File | Description |\n"
+        "|---|---|---|\n"
+        "| 1 | x | First. |\n"
+        "\n"
+        "| 2 | y | Second. |\n"
+        "## Next Section\n"
+        "\n"
+        "| # | File | Description |\n"
+        "|---|---|---|\n"
+        "| 3 | z | Third. |\n"
+    )
+    result = lint_file(target, repo_root=tmp_path, skip_branch_check=True, fix=True)
+    assert result.fixed == 2, (result.fixed, result.summary())
+    fixed_text = target.read_text()
+    # No blank line between the two rows of the first table
+    assert "| 1 | x | First. |\n| 2 | y | Second. |\n" in fixed_text
+    # Blank line inserted before the heading
+    assert "| 2 | y | Second. |\n\n## Next Section\n" in fixed_text
+    # Re-lint clean for these two checks
+    result2 = lint_file(target, repo_root=tmp_path, skip_branch_check=True)
+    assert not any("blank line inside table" in w for w in result2.warnings)
+    assert not any("flush against prior table row" in w for w in result2.warnings)
+
+
+def test_fix_no_op_on_clean_file(tmp_path):
+    target = tmp_path / "Backlog.md"
+    target.write_text((FIXTURES / "small-backlog.md").read_text())
+    before = target.read_text()
+    result = lint_file(target, repo_root=tmp_path, skip_branch_check=True, fix=True)
+    assert result.fixed == 0
+    assert target.read_text() == before

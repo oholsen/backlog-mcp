@@ -169,6 +169,10 @@ def tool_get_item(args: dict[str, Any]) -> str:
     lines.append("")
     lines.append("Description:")
     lines.append(it.description)
+    if it.body:
+        lines.append("")
+        lines.append("Body:")
+        lines.append(it.body)
     return "\n".join(lines)
 
 
@@ -250,12 +254,21 @@ def tool_add_item(args: dict[str, Any]) -> str:
     # CHANGELOG-INBOX → CHANGELOG flow. The file must contain a `## Inbox`
     # heading (above the archive); add_item fails closed otherwise.
     section = args.get("section") or "Inbox"
-    files = args["files"]
     description = args["description"]
+    body = (args.get("body") or "").strip()
+    files = args.get("files", "")
 
     text = BACKLOG_PATH.read_text()
     new_id = _next_free_id()
-    new_row = f"| {new_id} | {files} | {description} |\n"
+    if body:
+        # Heading-format: free-form markdown body. `files` ignored in this shape;
+        # if the caller passed it, fold it into the body as a leading line.
+        prefix = f"_Files: {files}_\n\n" if files else ""
+        new_row = f"### #{new_id} {description}\n\n{prefix}{body}\n\n"
+    else:
+        if not files:
+            return "files is required for table-format items (or pass body= for heading format)"
+        new_row = f"| {new_id} | {files} | {description} |\n"
 
     if " → " in section:
         _, h2 = section.split(" → ", 1)
@@ -471,7 +484,11 @@ TOOLS: list[tuple[str, str, dict, Any]] = [
         "Create a new backlog item with the next free ID. Defaults to the `## Inbox` "
         "section (append-only buffer; curated into topical sections later). Pass an "
         "explicit `section` only if you're confident which topical section it belongs "
-        "in. Verifies via lint and rolls back on failure.",
+        "in. Pass `body` (free-form markdown, multi-paragraph OK) to write a heading-"
+        "format item (`### #NNN title` + body block) instead of a single-line table "
+        "row — use this when the item genuinely needs paragraphs, lists, or code "
+        "fences. `files` is required for table format, optional for heading format. "
+        "Verifies via lint and rolls back on failure.",
         {
             "type": "object",
             "properties": {
@@ -480,9 +497,13 @@ TOOLS: list[tuple[str, str, dict, Any]] = [
                     "description": "Section heading. Defaults to 'Inbox'. Use 'Section → Subsection' for nested.",
                 },
                 "files": {"type": "string"},
-                "description": {"type": "string"},
+                "description": {"type": "string", "description": "Single-line title."},
+                "body": {
+                    "type": "string",
+                    "description": "Optional. When set, item is written in heading format with this as the body.",
+                },
             },
-            "required": ["files", "description"],
+            "required": ["description"],
         },
         tool_add_item,
     ),

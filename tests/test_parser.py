@@ -4,6 +4,7 @@ from backlog_mcp.parser import (
     index_by_id,
     one_line_summary,
     parse_backlog,
+    parse_backlog_text,
     parse_scores_text,
 )
 
@@ -58,6 +59,116 @@ def test_one_line_summary_strips_status_prefix():
     assert one_line_summary("**IN PROGRESS (foo)** **Real title.** Body.") == "Real title"
     assert one_line_summary("**DONE (PR #1).** Archived stuff. More.") == "Archived stuff"
     assert one_line_summary("Plain prose without bold marker.") == "Plain prose without bold marker"
+
+
+def test_parse_heading_format_items():
+    """`### #NNN <desc>` headings are parsed as Items so they collide with
+    table-row ids for next_id selection and lint duplicate checks."""
+    text = """\
+## Inbox
+
+### #42 Inbox heading-format item
+
+| # | File | Description |
+| - | ---- | ----------- |
+| 7 | x | Table row. |
+
+## Done — archive
+
+### #945 KC300 beacon retired
+### #946 Another archived heading
+"""
+    items = parse_backlog_text(text)
+    by_id = index_by_id(items)
+
+    assert {it.id for it in items} == {7, 42, 945, 946}
+
+    assert by_id[42].section == "Inbox"
+    assert by_id[42].archived is False
+    assert by_id[42].description == "Inbox heading-format item"
+    assert by_id[42].files == ""
+
+    assert by_id[945].archived is True
+    assert by_id[946].archived is True
+
+
+def test_heading_item_body_captured():
+    """Lines between `### #NNN <title>` and the next boundary become `body`."""
+    text = """\
+## Inbox
+
+### #42 Heading-format item
+
+First paragraph of the body.
+
+Second paragraph with a list:
+
+- one
+- two
+
+### #43 Next item
+
+Body of 43.
+
+## Other
+
+### #44 In another section
+
+Final body.
+"""
+    items = parse_backlog_text(text)
+    by_id = index_by_id(items)
+    assert by_id[42].body.startswith("First paragraph of the body.")
+    assert "- two" in by_id[42].body
+    assert by_id[43].body == "Body of 43."
+    assert by_id[44].body == "Final body."
+
+
+def test_heading_item_body_terminated_by_table_row():
+    """A table row after a heading item ends body collection."""
+    text = """\
+## Inbox
+
+### #42 Heading with body
+
+Body paragraph.
+
+| 7 | x | Row stops body collection. |
+"""
+    items = parse_backlog_text(text)
+    by_id = index_by_id(items)
+    assert by_id[42].body == "Body paragraph."
+    assert by_id[7].description == "Row stops body collection."
+
+
+def test_heading_item_body_empty_when_none():
+    """A heading item with no body has `body == ''`."""
+    text = """\
+## Inbox
+
+### #42 Just a title
+### #43 Next title
+"""
+    items = parse_backlog_text(text)
+    by_id = index_by_id(items)
+    assert by_id[42].body == ""
+    assert by_id[43].body == ""
+
+
+def test_heading_item_does_not_become_subsection():
+    """An `### #NNN ...` heading is consumed as an Item, so a following table
+    row stays under the parent section with no subsection."""
+    text = """\
+## Inbox
+
+### #42 Heading item
+
+| 7 | x | Row after the heading item. |
+"""
+    items = parse_backlog_text(text)
+    by_id = index_by_id(items)
+    assert by_id[7].subsection is None
+    assert by_id[7].section == "Inbox"
 
 
 def test_one_line_summary_truncates():

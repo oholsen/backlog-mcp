@@ -61,6 +61,31 @@ def test_add_item_explicit_section(server_with_inbox):
     assert section_a_idx < new_row_idx < inbox_idx
 
 
+def test_add_item_heading_format_with_body(server_with_inbox):
+    srv, backlog = server_with_inbox
+    result = srv.tool_add_item({
+        "description": "Heading-format item",
+        "body": "First paragraph.\n\nSecond paragraph.",
+    })
+    assert "Added" in result, result
+    text = backlog.read_text()
+    assert "### #6 Heading-format item" in text
+    assert "First paragraph." in text
+    assert "Second paragraph." in text
+
+    # Round-trip: parser sees the body.
+    from backlog_mcp.parser import index_by_id, parse_backlog_text
+    by_id = index_by_id(parse_backlog_text(text))
+    assert by_id[6].description == "Heading-format item"
+    assert by_id[6].body == "First paragraph.\n\nSecond paragraph."
+
+
+def test_add_item_requires_files_for_table_format(server_with_inbox):
+    srv, _ = server_with_inbox
+    result = srv.tool_add_item({"description": "no files, no body"})
+    assert "files is required" in result
+
+
 def test_add_item_assigns_next_free_id(server_with_inbox):
     srv, backlog = server_with_inbox
     # Fixture max ID is 5 (the archived one). Next free should be 6.
