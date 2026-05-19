@@ -6,7 +6,7 @@ HTTP MCP server so multiple sessions share one process and one writer.
 
 | # | File | Description |
 |---|---|---|
-| 2 | src/backlog_mcp/server_http.py | **IN PROGRESS (main)** **HTTP MCP server with write lock and query tool.** Single long-running process; sessions connect via StreamableHTTP. Auto-commits and pushes after each write. Requires `anthropic` extra for the `query` tool. |
+| ~~2~~ | ~~src/backlog_mcp/server_http.py~~ | **DONE** **HTTP MCP server with write lock and query tool.** Single long-running process; sessions connect via StreamableHTTP. Auto-commits and pushes after each write. Requires `anthropic` extra for the `query` tool. |
 | 3 | src/backlog_mcp/server_http.py | **Auth for backlog-agent.** Shared-secret header (`BACKLOG_AGENT_TOKEN`) to restrict write access to trusted callers. |
 | 4 | docs/ | **Docker / deployment guide.** Dockerfile and compose snippet for hosting backlog-agent as a team service. |
 
