@@ -99,7 +99,10 @@ def parse_backlog_text(text: str, archive_section_prefix: str = "Done") -> list[
             id_ = int(m.group(2))
             files = m.group(4).replace("~~", "").strip()
             description = m.group(5).strip()
-            row_archived = archived or m.group(1) == "~~"
+            # Strikethrough markup is the source of truth for table rows; an
+            # open-format row keeps open status even when it physically sits in
+            # (or in a subsection under) the `## Done` archive section.
+            row_archived = m.group(1) == "~~"
             in_progress = "IN PROGRESS" in description and not row_archived
             items.append(Item(
                 id=id_,

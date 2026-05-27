@@ -171,6 +171,30 @@ def test_heading_item_does_not_become_subsection():
     assert by_id[7].section == "Inbox"
 
 
+def test_open_table_row_in_done_subsection_stays_open():
+    """An open-format table row that physically sits in a subsection under the
+    `## Done — archive` section must report open status — strikethrough markup,
+    not section position, is the source of truth for table rows. Regression for
+    a case where an open item near the archive/inbox tail was mis-reported DONE.
+    """
+    text = """\
+## Done — archive
+
+| ~~5~~ | ~~src/e.rs~~ | **DONE.** Real archived item. |
+
+### Inbox
+
+| 925 | src/x.py | Open item parked in the inbox tail. |
+"""
+    items = parse_backlog_text(text)
+    by_id = index_by_id(items)
+
+    assert by_id[5].archived is True   # struck-through markup -> archived
+    assert by_id[925].section == "Done — archive"
+    assert by_id[925].subsection == "Inbox"
+    assert by_id[925].archived is False  # open markup -> open, despite section
+
+
 def test_one_line_summary_truncates():
     long = "**" + ("x" * 200) + "**"
     s = one_line_summary(long, max_chars=50)
