@@ -51,11 +51,11 @@ class LintResult:
         return "\n".join(lines)
 
 
-_ROW_ID = re.compile(r"^\| (~?~?)(\d+)\1 \|")
+_ROW_ID = re.compile(r"^\| (\d+) \| \[")  # matches new 4-col format: | NNN | [status] |
 _TABLE_HEADER = re.compile(r"^\|\s*#\s*\|", re.IGNORECASE)
 _TABLE_SEP = re.compile(r"^\|[\s\-:|]+\|\s*$")
 _CONFLICT = re.compile(r"^(<<<<<<<|=======|>>>>>>>)")
-_INPROGRESS = re.compile(r"IN PROGRESS \(([^)]+)\)")
+_INPROGRESS = re.compile(r"\[in-progress: ([^\]]+)\]")
 _RESERVED_BRANCHES = {"main", "master", "HEAD"}
 
 
@@ -89,7 +89,7 @@ def lint_file(
     for ln, line in enumerate(lines, start=1):
         m = _ROW_ID.match(line)
         if m:
-            ids.setdefault(int(m.group(2)), []).append(ln)
+            ids.setdefault(int(m.group(1)), []).append(ln)
     dupes = {id_: lns for id_, lns in ids.items() if len(lns) > 1}
     if dupes:
         for id_, lns in sorted(dupes.items()):

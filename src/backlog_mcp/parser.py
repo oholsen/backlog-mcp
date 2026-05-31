@@ -12,7 +12,7 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
-ROW_RE = re.compile(r"^\| (~~)?(\d+)(~~)? \| (.*?) \| (.*) \|$")
+ROW_RE = re.compile(r"^\| (\d+) \| (\[[^\]]+\]) \| (.*?) \| (.*) \|$")
 HEADING_ITEM_RE = re.compile(r"^### #(\d+)\s+(.*\S)\s*$")
 
 
@@ -23,8 +23,8 @@ class Item:
     description: str
     section: str            # `## ` heading
     subsection: str | None  # `### ` heading, if any
-    archived: bool          # under a `## Done` (or similar archive) section
-    in_progress: bool       # `**IN PROGRESS (...)**` prefix in description
+    archived: bool          # status tag starts with `[done`
+    in_progress: bool       # status tag starts with `[in-progress`
     raw_line: str           # original markdown row (for verifying writes)
     body: str = ""          # heading-format items only: free-form markdown body
                             # between the `### #NNN ...` line and the next boundary
@@ -79,14 +79,20 @@ def parse_backlog_text(text: str, archive_section_prefix: str = "Done") -> list[
             flush_body()
             hm = HEADING_ITEM_RE.match(line)
             if hm:
+                hm_full = hm.group(2).strip()
+                hm_status = re.match(r"(\[[^\]]+\])\s*(.*)", hm_full)
+                if hm_status:
+                    status_tag, clean_title = hm_status.group(1), hm_status.group(2)
+                else:
+                    status_tag, clean_title = "[open]", hm_full
                 items.append(Item(
                     id=int(hm.group(1)),
                     files="",
-                    description=hm.group(2).strip(),
+                    description=clean_title,
                     section=section,
                     subsection=subsection,
-                    archived=archived,
-                    in_progress=False,
+                    archived=status_tag.startswith("[done"),
+                    in_progress=status_tag.startswith("[in-progress"),
                     raw_line=line,
                 ))
                 body_buf = []
@@ -96,14 +102,12 @@ def parse_backlog_text(text: str, archive_section_prefix: str = "Done") -> list[
         m = ROW_RE.match(line)
         if m:
             flush_body()
-            id_ = int(m.group(2))
-            files = m.group(4).replace("~~", "").strip()
-            description = m.group(5).strip()
-            # Strikethrough markup is the source of truth for table rows; an
-            # open-format row keeps open status even when it physically sits in
-            # (or in a subsection under) the `## Done` archive section.
-            row_archived = m.group(1) == "~~"
-            in_progress = "IN PROGRESS" in description and not row_archived
+            id_ = int(m.group(1))
+            status_tag = m.group(2)
+            files = m.group(3).strip()
+            description = m.group(4).strip()
+            row_archived = status_tag.startswith("[done")
+            row_in_progress = status_tag.startswith("[in-progress")
             items.append(Item(
                 id=id_,
                 files=files,
@@ -111,7 +115,7 @@ def parse_backlog_text(text: str, archive_section_prefix: str = "Done") -> list[
                 section=section,
                 subsection=subsection,
                 archived=row_archived,
-                in_progress=in_progress,
+                in_progress=row_in_progress,
                 raw_line=line,
             ))
             continue
@@ -176,7 +180,7 @@ def index_by_id(items: list[Item]) -> dict[int, Item]:
 
 def one_line_summary(description: str, max_chars: int = 120) -> str:
     """First **bold** chunk or first sentence, capped to max_chars."""
-    desc = re.sub(r"^\*\*(IN PROGRESS \([^)]+\)|DONE[^*]*)\*\*\s*", "", description)
+    desc = re.sub(r"^\[[^\]]+\]\s*", "", description)  # strip [status] prefix
     bold = re.match(r"\*\*([^*]+)\*\*", desc)
     if bold:
         s = bold.group(1).strip().rstrip(".")

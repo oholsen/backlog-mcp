@@ -265,11 +265,11 @@ def tool_add_item(args: dict[str, Any]) -> str:
         # Heading-format: free-form markdown body. `files` ignored in this shape;
         # if the caller passed it, fold it into the body as a leading line.
         prefix = f"_Files: {files}_\n\n" if files else ""
-        new_row = f"### #{new_id} {description}\n\n{prefix}{body}\n\n"
+        new_row = f"### #{new_id} [open] {description}\n\n{prefix}{body}\n\n"
     else:
         if not files:
             return "files is required for table-format items (or pass body= for heading format)"
-        new_row = f"| {new_id} | {files} | {description} |\n"
+        new_row = f"| {new_id} | [open] | {files} | {description} |\n"
 
     if " → " in section:
         _, h2 = section.split(" → ", 1)
@@ -304,6 +304,24 @@ def tool_add_item(args: dict[str, Any]) -> str:
         BACKLOG_PATH.write_text(text)
         return f"add_item rolled back; lint failed:\n{msg}"
     return f"Added #{new_id} to {section!r}"
+
+
+def _delete_table_row(text: str, raw_line: str) -> str:
+    for candidate in (raw_line + "\n", raw_line):
+        if candidate in text:
+            return text.replace(candidate, "", 1)
+    return text
+
+
+def _delete_heading_block(text: str, raw_heading_line: str) -> str:
+    idx = text.find(raw_heading_line)
+    if idx == -1:
+        return text
+    end = idx + len(raw_heading_line)
+    rest = text[end:]
+    m = re.search(r"\n(?=#{2,3} )", rest)
+    block_end = end + (m.start() + 1 if m else len(rest))
+    return text[:idx] + text[block_end:]
 
 
 def _move_to_archive(text: str, old_raw_line: str, new_row_line: str) -> tuple[str, bool]:
@@ -355,39 +373,32 @@ def tool_update_status(args: dict[str, Any]) -> str:
         return f"#{id_} not found"
     it = by_id[id_]
 
-    new_desc = re.sub(r"^\*\*IN PROGRESS \([^)]+\)\*\*\s*", "", it.description)
+    is_heading = it.raw_line.startswith("### ")
+    # description is already clean (status tag stripped by parser for both formats)
+    clean_desc = it.description
 
     if new_status == "in_progress":
         if not branch:
             return "branch is required for status=in_progress"
-        new_desc = f"**IN PROGRESS ({branch})** {new_desc}"
-        new_line = f"| {it.id} | {it.files} | {new_desc} |"
+        if is_heading:
+            new_line = f"### #{it.id} [in-progress: {branch}] {clean_desc}"
+        else:
+            new_line = f"| {it.id} | [in-progress: {branch}] | {it.files} | {it.description} |"
+        new_text = text.replace(it.raw_line, new_line)
     elif new_status == "done":
-        if not new_desc.lstrip().startswith("**DONE"):
-            done_marker = f"**DONE{f' ({summary})' if summary else ''}**"
-            new_desc = f"{done_marker} {new_desc}"
-        new_line = f"| ~~{it.id}~~ | ~~{it.files}~~ | {new_desc} |"
+        # Done items are deleted from Backlog.md; CHANGELOG-INBOX is the record.
+        if is_heading:
+            new_text = _delete_heading_block(text, it.raw_line)
+        else:
+            new_text = _delete_table_row(text, it.raw_line)
     elif new_status == "open":
-        new_line = f"| {it.id} | {it.files} | {new_desc} |"
+        if is_heading:
+            new_line = f"### #{it.id} [open] {clean_desc}"
+        else:
+            new_line = f"| {it.id} | [open] | {it.files} | {it.description} |"
+        new_text = text.replace(it.raw_line, new_line)
     else:
         return f"unknown status: {new_status!r} (use in_progress / done / open)"
-
-    new_text = text.replace(it.raw_line, new_line)
-
-    # On done: relocate the (now struck-through) row to the archive section,
-    # unless the item is already there or is a heading-format item (which has
-    # no table-row markup to move). Falls back to the in-place rewrite if the
-    # archive heading isn't found.
-    relocated_note = ""
-    if (
-        new_status == "done"
-        and not it.section.startswith(ARCHIVE_PREFIX)
-        and not it.raw_line.lstrip().startswith("###")
-    ):
-        moved_text, moved = _move_to_archive(text, it.raw_line, new_line)
-        if moved:
-            new_text = moved_text
-            relocated_note = "; moved to archive"
 
     BACKLOG_PATH.write_text(new_text)
     ok, msg = _verify_with_lint()
@@ -396,6 +407,7 @@ def tool_update_status(args: dict[str, Any]) -> str:
         return f"update_status rolled back; lint failed:\n{msg}"
 
     changelog_note = ""
+    relocated_note = ""
     if new_status == "done" and changelog and summary:
         if CHANGELOG_INBOX_PATH.is_file():
             pr_ref = f" (PR #{pr})" if pr else ""

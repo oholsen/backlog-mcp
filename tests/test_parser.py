@@ -15,8 +15,8 @@ def test_parse_backlog_counts_and_status():
     items = parse_backlog(FIXTURES / "small-backlog.md")
     by_id = index_by_id(items)
 
-    assert len(items) == 5
-    assert {it.id for it in items} == {1, 2, 3, 5, 10}
+    assert len(items) == 4
+    assert {it.id for it in items} == {1, 2, 3, 10}
 
     assert by_id[1].section == "Section A"
     assert by_id[1].subsection is None
@@ -29,15 +29,12 @@ def test_parse_backlog_counts_and_status():
     assert by_id[3].subsection == "Subsection X"
     assert by_id[3].section == "Section A"
 
-    assert by_id[5].archived is True
-    assert by_id[5].in_progress is False  # archived overrides in_progress
 
-
-def test_parse_backlog_files_unstrike():
+def test_parse_backlog_files():
     items = parse_backlog(FIXTURES / "small-backlog.md")
     by_id = index_by_id(items)
-    # Strikethrough markers stripped from files
-    assert by_id[5].files == "src/e.rs"
+    assert by_id[1].files == "src/backlog_mcp/server.py"
+    assert by_id[2].files == "src/backlog_mcp/server.py"
 
 
 def test_parse_scores_handles_comments_and_lists():
@@ -56,48 +53,58 @@ id,complexity,value,ready,blocked_by,tags,notes
 
 
 def test_one_line_summary_strips_status_prefix():
-    assert one_line_summary("**IN PROGRESS (foo)** **Real title.** Body.") == "Real title"
-    assert one_line_summary("**DONE (PR #1).** Archived stuff. More.") == "Archived stuff"
-    assert one_line_summary("Plain prose without bold marker.") == "Plain prose without bold marker"
+    assert one_line_summary("[in-progress: feat-foo] **Real title.** Body.") == "Real title"
+    assert one_line_summary("[done: PR #1, 2026-05-01] Archived stuff. More.") == "Archived stuff"
+    assert one_line_summary("[open] Plain prose.") == "Plain prose"
+    assert one_line_summary("Plain prose without status tag.") == "Plain prose without status tag"
 
 
 def test_parse_heading_format_items():
-    """`### #NNN <desc>` headings are parsed as Items so they collide with
-    table-row ids for next_id selection and lint duplicate checks."""
     text = """\
 ## Inbox
 
-### #42 Inbox heading-format item
+### #42 [open] Inbox heading-format item
 
-| # | File | Description |
-| - | ---- | ----------- |
-| 7 | x | Table row. |
-
-## Done — archive
-
-### #945 KC300 beacon retired
-### #946 Another archived heading
+| # | Status | File | Description |
+|---|--------|------|-------------|
+| 7 | [open] | x | Table row. |
 """
     items = parse_backlog_text(text)
     by_id = index_by_id(items)
 
-    assert {it.id for it in items} == {7, 42, 945, 946}
+    assert {it.id for it in items} == {7, 42}
 
     assert by_id[42].section == "Inbox"
     assert by_id[42].archived is False
+    assert by_id[42].in_progress is False
     assert by_id[42].description == "Inbox heading-format item"
     assert by_id[42].files == ""
 
-    assert by_id[945].archived is True
-    assert by_id[946].archived is True
+    assert by_id[7].description == "Table row."
+
+
+def test_heading_item_in_progress():
+    text = """\
+## Section A
+
+### #10 [in-progress: feat-10] Active item
+### #11 [done: PR #99, 2026-05-01] Done item
+"""
+    items = parse_backlog_text(text)
+    by_id = index_by_id(items)
+    assert by_id[10].in_progress is True
+    assert by_id[10].archived is False
+    assert by_id[10].description == "Active item"
+    assert by_id[11].archived is True
+    assert by_id[11].in_progress is False
+    assert by_id[11].description == "Done item"
 
 
 def test_heading_item_body_captured():
-    """Lines between `### #NNN <title>` and the next boundary become `body`."""
     text = """\
 ## Inbox
 
-### #42 Heading-format item
+### #42 [open] Heading-format item
 
 First paragraph of the body.
 
@@ -106,13 +113,13 @@ Second paragraph with a list:
 - one
 - two
 
-### #43 Next item
+### #43 [open] Next item
 
 Body of 43.
 
 ## Other
 
-### #44 In another section
+### #44 [open] In another section
 
 Final body.
 """
@@ -125,15 +132,16 @@ Final body.
 
 
 def test_heading_item_body_terminated_by_table_row():
-    """A table row after a heading item ends body collection."""
     text = """\
 ## Inbox
 
-### #42 Heading with body
+### #42 [open] Heading with body
 
 Body paragraph.
 
-| 7 | x | Row stops body collection. |
+| # | Status | File | Description |
+|---|--------|------|-------------|
+| 7 | [open] | x | Row stops body collection. |
 """
     items = parse_backlog_text(text)
     by_id = index_by_id(items)
@@ -142,12 +150,11 @@ Body paragraph.
 
 
 def test_heading_item_body_empty_when_none():
-    """A heading item with no body has `body == ''`."""
     text = """\
 ## Inbox
 
-### #42 Just a title
-### #43 Next title
+### #42 [open] Just a title
+### #43 [open] Next title
 """
     items = parse_backlog_text(text)
     by_id = index_by_id(items)
@@ -156,43 +163,19 @@ def test_heading_item_body_empty_when_none():
 
 
 def test_heading_item_does_not_become_subsection():
-    """An `### #NNN ...` heading is consumed as an Item, so a following table
-    row stays under the parent section with no subsection."""
     text = """\
 ## Inbox
 
-### #42 Heading item
+### #42 [open] Heading item
 
-| 7 | x | Row after the heading item. |
+| # | Status | File | Description |
+|---|--------|------|-------------|
+| 7 | [open] | x | Row after the heading item. |
 """
     items = parse_backlog_text(text)
     by_id = index_by_id(items)
     assert by_id[7].subsection is None
     assert by_id[7].section == "Inbox"
-
-
-def test_open_table_row_in_done_subsection_stays_open():
-    """An open-format table row that physically sits in a subsection under the
-    `## Done — archive` section must report open status — strikethrough markup,
-    not section position, is the source of truth for table rows. Regression for
-    a case where an open item near the archive/inbox tail was mis-reported DONE.
-    """
-    text = """\
-## Done — archive
-
-| ~~5~~ | ~~src/e.rs~~ | **DONE.** Real archived item. |
-
-### Inbox
-
-| 925 | src/x.py | Open item parked in the inbox tail. |
-"""
-    items = parse_backlog_text(text)
-    by_id = index_by_id(items)
-
-    assert by_id[5].archived is True   # struck-through markup -> archived
-    assert by_id[925].section == "Done — archive"
-    assert by_id[925].subsection == "Inbox"
-    assert by_id[925].archived is False  # open markup -> open, despite section
 
 
 def test_one_line_summary_truncates():
