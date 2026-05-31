@@ -32,6 +32,7 @@ from mcp.server import Server
 from mcp.server.stdio import stdio_server
 from mcp.types import TextContent, Tool
 
+from .file_lock import backlog_lock
 from .lint import lint_file
 from .parser import (
     Item,
@@ -305,6 +306,41 @@ def tool_add_item(args: dict[str, Any]) -> str:
     return f"Added #{new_id} to {section!r}"
 
 
+def _move_to_archive(text: str, old_raw_line: str, new_row_line: str) -> tuple[str, bool]:
+    """Relocate a table row to the end of the `## {ARCHIVE_PREFIX}…` section.
+
+    Removes `old_raw_line` and inserts `new_row_line` just before the first
+    `## ` or `### ` heading that follows the archive anchor — i.e., at the end
+    of the archive section's primary table, above any subsection that may sit
+    underneath. Returns (new_text, True) on success, (text, False) if the
+    archive heading isn't found or `old_raw_line` isn't present.
+    """
+    archive_re = re.compile(r"^## " + re.escape(ARCHIVE_PREFIX) + r"[^\n]*$", re.MULTILINE)
+    if old_raw_line not in text or not archive_re.search(text):
+        return text, False
+
+    removed = text.replace(old_raw_line + "\n", "", 1)
+    if removed == text:
+        removed = text.replace(old_raw_line, "", 1)
+    text = removed
+
+    m = archive_re.search(text)
+    if not m:
+        return text, False
+
+    anchor_end = m.end()
+    rest = text[anchor_end:]
+    next_boundary = re.search(r"\n(?=## |### )", rest)
+    insertion_end = anchor_end + (next_boundary.start() if next_boundary else len(rest))
+
+    pre = text[:insertion_end]
+    while pre.endswith("\n\n"):
+        pre = pre[:-1]
+    if not pre.endswith("\n"):
+        pre += "\n"
+    return pre + new_row_line + "\n" + text[insertion_end:].lstrip("\n"), True
+
+
 def tool_update_status(args: dict[str, Any]) -> str:
     id_ = int(args["id"])
     new_status = args["status"].lower()
@@ -337,6 +373,22 @@ def tool_update_status(args: dict[str, Any]) -> str:
         return f"unknown status: {new_status!r} (use in_progress / done / open)"
 
     new_text = text.replace(it.raw_line, new_line)
+
+    # On done: relocate the (now struck-through) row to the archive section,
+    # unless the item is already there or is a heading-format item (which has
+    # no table-row markup to move). Falls back to the in-place rewrite if the
+    # archive heading isn't found.
+    relocated_note = ""
+    if (
+        new_status == "done"
+        and not it.section.startswith(ARCHIVE_PREFIX)
+        and not it.raw_line.lstrip().startswith("###")
+    ):
+        moved_text, moved = _move_to_archive(text, it.raw_line, new_line)
+        if moved:
+            new_text = moved_text
+            relocated_note = "; moved to archive"
+
     BACKLOG_PATH.write_text(new_text)
     ok, msg = _verify_with_lint()
     if not ok:
@@ -359,7 +411,7 @@ def tool_update_status(args: dict[str, Any]) -> str:
         else:
             changelog_note = "; CHANGELOG-INBOX not found — skipped"
 
-    return f"#{id_} status set to {new_status}{changelog_note}"
+    return f"#{id_} status set to {new_status}{relocated_note}{changelog_note}"
 
 
 def tool_set_score(args: dict[str, Any]) -> str:
@@ -548,6 +600,10 @@ TOOLS: list[tuple[str, str, dict, Any]] = [
 
 TOOL_BY_NAME = {name: handler for name, _, _, handler in TOOLS}
 
+# Tools that mutate files on disk — wrapped in an fcntl flock so concurrent
+# stdio sessions (and any other process honouring backlog_lock) don't race.
+_WRITE_TOOL_NAMES = {"add_item", "update_status", "set_score"}
+
 
 @server.list_tools()
 async def handle_list_tools() -> list[Tool]:
@@ -563,7 +619,11 @@ async def handle_call_tool(name: str, arguments: dict[str, Any]) -> list[TextCon
     if handler is None:
         return [TextContent(type="text", text=f"Unknown tool: {name}")]
     try:
-        result = handler(arguments or {})
+        if name in _WRITE_TOOL_NAMES:
+            with backlog_lock(BACKLOG_PATH):
+                result = handler(arguments or {})
+        else:
+            result = handler(arguments or {})
     except Exception as e:
         result = f"{type(e).__name__}: {e}"
     return [TextContent(type="text", text=str(result))]
