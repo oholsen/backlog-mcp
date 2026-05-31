@@ -93,3 +93,31 @@ def test_unknown_id_returns_error(server_with_inbox):
     srv, _ = server_with_inbox
     result = srv.tool_update_status({"id": 9999, "status": "done"})
     assert "not found" in result
+
+
+def test_done_heading_item_deletes_block_preserves_next_section(tmp_path, monkeypatch):
+    backlog = tmp_path / "Backlog.md"
+    backlog.write_text(
+        "# Backlog\n\n## Section A\n\n"
+        "### #1 [open] Rich item\n\n"
+        "Body text.\n\n"
+        "## Inbox\n\n"
+        "| # | Status | File | Description |\n"
+        "|---|--------|------|-------------|\n"
+        "| 2 | [open] | src/x.py | Inbox item. |\n"
+    )
+    monkeypatch.setenv("BACKLOG_PATH", str(backlog))
+    monkeypatch.setenv("BACKLOG_SCORES", str(tmp_path / "scores.csv"))
+    monkeypatch.setenv("BACKLOG_REPO_ROOT", str(tmp_path))
+    from backlog_mcp import server as srv
+    importlib.reload(srv)
+
+    result = srv.tool_update_status({"id": 1, "status": "done"})
+    assert "done" in result, result
+
+    text = backlog.read_text()
+    assert "### #1" not in text
+    assert "Body text." not in text
+    # Next section heading must be present with a blank-line separator
+    assert "\n\n## Inbox\n" in text
+    assert "| 2 |" in text

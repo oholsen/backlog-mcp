@@ -41,17 +41,11 @@ class Score:
     notes: str = ""
 
 
-def parse_backlog_text(text: str, archive_section_prefix: str = "Done") -> list[Item]:
-    """Parse a backlog markdown file (as text) into a list of Items.
-
-    `archive_section_prefix` matches the start of the `## ` heading that holds
-    the DONE archive (default: `## Done — archive`, but also matches anything
-    starting with `Done`).
-    """
+def parse_backlog_text(text: str) -> list[Item]:
+    """Parse a backlog markdown file (as text) into a list of Items."""
     items: list[Item] = []
     section: str = ""
     subsection: str | None = None
-    archived = False
     body_buf: list[str] | None = None  # collecting body for the last heading-format item
 
     def flush_body() -> None:
@@ -73,7 +67,6 @@ def parse_backlog_text(text: str, archive_section_prefix: str = "Done") -> list[
             flush_body()
             section = line[3:].strip()
             subsection = None
-            archived = section.startswith(archive_section_prefix)
             continue
         if line.startswith("### "):
             flush_body()
@@ -130,8 +123,8 @@ def parse_backlog_text(text: str, archive_section_prefix: str = "Done") -> list[
     return items
 
 
-def parse_backlog(path: Path, archive_section_prefix: str = "Done") -> list[Item]:
-    return parse_backlog_text(path.read_text(), archive_section_prefix=archive_section_prefix)
+def parse_backlog(path: Path) -> list[Item]:
+    return parse_backlog_text(path.read_text())
 
 
 def parse_scores_text(text: str) -> dict[int, Score]:

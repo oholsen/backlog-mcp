@@ -12,8 +12,6 @@ backlog without code changes:
                             if unset or missing (default: Backlog-Scores.csv next to BACKLOG_PATH)
     BACKLOG_REPO_ROOT       Repo root for git operations (default: parent of backlog;
                             falls back to `git rev-parse --show-toplevel`)
-    BACKLOG_ARCHIVE_PREFIX  Prefix that identifies the archive `## ` heading
-                            (default: "Done", matching `## Done — archive`)
     BACKLOG_CHANGELOG_INBOX Path to the CHANGELOG-INBOX append buffer
                             (default: CHANGELOG-INBOX.md at repo root)
 """
@@ -68,7 +66,6 @@ def _resolve_repo_root(backlog_path: Path) -> Path:
 
 BACKLOG_PATH = Path(os.environ.get("BACKLOG_PATH", "Backlog.md")).resolve()
 SCORES_PATH = Path(os.environ.get("BACKLOG_SCORES", BACKLOG_PATH.parent / "Backlog-Scores.csv")).resolve()
-ARCHIVE_PREFIX = os.environ.get("BACKLOG_ARCHIVE_PREFIX", "Done")
 REPO_ROOT = _resolve_repo_root(BACKLOG_PATH)
 CHANGELOG_INBOX_PATH = Path(
     os.environ.get("BACKLOG_CHANGELOG_INBOX", str(REPO_ROOT / "CHANGELOG-INBOX.md"))
@@ -76,7 +73,7 @@ CHANGELOG_INBOX_PATH = Path(
 
 
 def _items() -> tuple[list[Item], dict[int, Item]]:
-    items = parse_backlog(BACKLOG_PATH, archive_section_prefix=ARCHIVE_PREFIX)
+    items = parse_backlog(BACKLOG_PATH)
     return items, index_by_id(items)
 
 
@@ -296,7 +293,10 @@ def tool_add_item(args: dict[str, Any]) -> str:
         pre = pre[:-1]
     if not pre.endswith("\n"):
         pre += "\n"
-    new_text = pre + new_row + text[insertion_end:].lstrip("\n")
+    suffix = text[insertion_end:]
+    if suffix.startswith("\n"):
+        suffix = "\n" + suffix.lstrip("\n")
+    new_text = pre + new_row + suffix
 
     BACKLOG_PATH.write_text(new_text)
     ok, msg = _verify_with_lint()
@@ -320,43 +320,11 @@ def _delete_heading_block(text: str, raw_heading_line: str) -> str:
     end = idx + len(raw_heading_line)
     rest = text[end:]
     m = re.search(r"\n(?=#{2,3} )", rest)
-    block_end = end + (m.start() + 1 if m else len(rest))
+    # m.start() is the \n just before the next heading — don't include it so
+    # the blank-line separator before that heading is preserved.
+    block_end = end + (m.start() if m else len(rest))
     return text[:idx] + text[block_end:]
 
-
-def _move_to_archive(text: str, old_raw_line: str, new_row_line: str) -> tuple[str, bool]:
-    """Relocate a table row to the end of the `## {ARCHIVE_PREFIX}…` section.
-
-    Removes `old_raw_line` and inserts `new_row_line` just before the first
-    `## ` or `### ` heading that follows the archive anchor — i.e., at the end
-    of the archive section's primary table, above any subsection that may sit
-    underneath. Returns (new_text, True) on success, (text, False) if the
-    archive heading isn't found or `old_raw_line` isn't present.
-    """
-    archive_re = re.compile(r"^## " + re.escape(ARCHIVE_PREFIX) + r"[^\n]*$", re.MULTILINE)
-    if old_raw_line not in text or not archive_re.search(text):
-        return text, False
-
-    removed = text.replace(old_raw_line + "\n", "", 1)
-    if removed == text:
-        removed = text.replace(old_raw_line, "", 1)
-    text = removed
-
-    m = archive_re.search(text)
-    if not m:
-        return text, False
-
-    anchor_end = m.end()
-    rest = text[anchor_end:]
-    next_boundary = re.search(r"\n(?=## |### )", rest)
-    insertion_end = anchor_end + (next_boundary.start() if next_boundary else len(rest))
-
-    pre = text[:insertion_end]
-    while pre.endswith("\n\n"):
-        pre = pre[:-1]
-    if not pre.endswith("\n"):
-        pre += "\n"
-    return pre + new_row_line + "\n" + text[insertion_end:].lstrip("\n"), True
 
 
 def tool_update_status(args: dict[str, Any]) -> str:
@@ -383,7 +351,7 @@ def tool_update_status(args: dict[str, Any]) -> str:
         if is_heading:
             new_line = f"### #{it.id} [in-progress: {branch}] {clean_desc}"
         else:
-            new_line = f"| {it.id} | [in-progress: {branch}] | {it.files} | {it.description} |"
+            new_line = f"| {it.id} | [in-progress: {branch}] | {it.files} | {clean_desc} |"
         new_text = text.replace(it.raw_line, new_line)
     elif new_status == "done":
         # Done items are deleted from Backlog.md; CHANGELOG-INBOX is the record.
