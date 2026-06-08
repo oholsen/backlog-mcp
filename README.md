@@ -315,8 +315,6 @@ CI usage (GitHub Actions):
 
 - **Concurrent edits (stdio).** Two `backlog-mcp` stdio processes writing
   simultaneously will race. Use `backlog-agent` (HTTP) for shared access.
-- **Move-to-archive.** `update_status status=done` flips the row in place but
-  doesn't relocate it to the archive section. Periodic manual sweep covers it.
 - **Cross-reference checking.** Currently deferred — prose mixes "(PRs #X, #Y)"
   groups, "Agents.md #6" anchors, and "the #1 finding" with real refs; needs a
   smarter parser than is currently warranted.

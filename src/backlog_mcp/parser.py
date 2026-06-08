@@ -12,7 +12,7 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
-ROW_RE = re.compile(r"^\| (~~)?(\d+)(~~)? \| (.*?) \| (.*) \|$")
+ROW_RE = re.compile(r"^\| (\d+) \| (\[[^\]]+\]) \| (.*?) \| (.*) \|$")
 HEADING_ITEM_RE = re.compile(r"^### #(\d+)\s+(.*\S)\s*$")
 
 
@@ -23,8 +23,8 @@ class Item:
     description: str
     section: str            # `## ` heading
     subsection: str | None  # `### ` heading, if any
-    archived: bool          # under a `## Done` (or similar archive) section
-    in_progress: bool       # `**IN PROGRESS (...)**` prefix in description
+    archived: bool          # status tag starts with `[done`
+    in_progress: bool       # status tag starts with `[in-progress`
     raw_line: str           # original markdown row (for verifying writes)
     body: str = ""          # heading-format items only: free-form markdown body
                             # between the `### #NNN ...` line and the next boundary
@@ -41,17 +41,11 @@ class Score:
     notes: str = ""
 
 
-def parse_backlog_text(text: str, archive_section_prefix: str = "Done") -> list[Item]:
-    """Parse a backlog markdown file (as text) into a list of Items.
-
-    `archive_section_prefix` matches the start of the `## ` heading that holds
-    the DONE archive (default: `## Done — archive`, but also matches anything
-    starting with `Done`).
-    """
+def parse_backlog_text(text: str) -> list[Item]:
+    """Parse a backlog markdown file (as text) into a list of Items."""
     items: list[Item] = []
     section: str = ""
     subsection: str | None = None
-    archived = False
     body_buf: list[str] | None = None  # collecting body for the last heading-format item
 
     def flush_body() -> None:
@@ -73,20 +67,25 @@ def parse_backlog_text(text: str, archive_section_prefix: str = "Done") -> list[
             flush_body()
             section = line[3:].strip()
             subsection = None
-            archived = section.startswith(archive_section_prefix)
             continue
         if line.startswith("### "):
             flush_body()
             hm = HEADING_ITEM_RE.match(line)
             if hm:
+                hm_full = hm.group(2).strip()
+                hm_status = re.match(r"(\[[^\]]+\])\s*(.*)", hm_full)
+                if hm_status:
+                    status_tag, clean_title = hm_status.group(1), hm_status.group(2)
+                else:
+                    status_tag, clean_title = "[open]", hm_full
                 items.append(Item(
                     id=int(hm.group(1)),
                     files="",
-                    description=hm.group(2).strip(),
+                    description=clean_title,
                     section=section,
                     subsection=subsection,
-                    archived=archived,
-                    in_progress=False,
+                    archived=status_tag.startswith("[done"),
+                    in_progress=status_tag.startswith("[in-progress"),
                     raw_line=line,
                 ))
                 body_buf = []
@@ -96,11 +95,12 @@ def parse_backlog_text(text: str, archive_section_prefix: str = "Done") -> list[
         m = ROW_RE.match(line)
         if m:
             flush_body()
-            id_ = int(m.group(2))
-            files = m.group(4).replace("~~", "").strip()
-            description = m.group(5).strip()
-            row_archived = archived or m.group(1) == "~~"
-            in_progress = "IN PROGRESS" in description and not row_archived
+            id_ = int(m.group(1))
+            status_tag = m.group(2)
+            files = m.group(3).strip()
+            description = m.group(4).strip()
+            row_archived = status_tag.startswith("[done")
+            row_in_progress = status_tag.startswith("[in-progress")
             items.append(Item(
                 id=id_,
                 files=files,
@@ -108,7 +108,7 @@ def parse_backlog_text(text: str, archive_section_prefix: str = "Done") -> list[
                 section=section,
                 subsection=subsection,
                 archived=row_archived,
-                in_progress=in_progress,
+                in_progress=row_in_progress,
                 raw_line=line,
             ))
             continue
@@ -123,8 +123,8 @@ def parse_backlog_text(text: str, archive_section_prefix: str = "Done") -> list[
     return items
 
 
-def parse_backlog(path: Path, archive_section_prefix: str = "Done") -> list[Item]:
-    return parse_backlog_text(path.read_text(), archive_section_prefix=archive_section_prefix)
+def parse_backlog(path: Path) -> list[Item]:
+    return parse_backlog_text(path.read_text())
 
 
 def parse_scores_text(text: str) -> dict[int, Score]:
@@ -173,7 +173,7 @@ def index_by_id(items: list[Item]) -> dict[int, Item]:
 
 def one_line_summary(description: str, max_chars: int = 120) -> str:
     """First **bold** chunk or first sentence, capped to max_chars."""
-    desc = re.sub(r"^\*\*(IN PROGRESS \([^)]+\)|DONE[^*]*)\*\*\s*", "", description)
+    desc = re.sub(r"^\[[^\]]+\]\s*", "", description)  # strip [status] prefix
     bold = re.match(r"\*\*([^*]+)\*\*", desc)
     if bold:
         s = bold.group(1).strip().rstrip(".")

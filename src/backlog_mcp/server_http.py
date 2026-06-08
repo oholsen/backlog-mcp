@@ -31,9 +31,11 @@ from starlette.applications import Starlette
 from starlette.routing import Mount
 
 from .agent import query_backlog
+from .file_lock import backlog_lock
 from .git_ops import commit_and_push
 from .server import (
     BACKLOG_PATH,
+    CHANGELOG_INBOX_PATH,
     REPO_ROOT,
     SCORES_PATH,
     TOOLS as _STDIO_TOOLS,
@@ -44,7 +46,6 @@ from .server import (
     tool_lint,
     tool_list_items,
     tool_list_sections,
-    tool_next_id,
     tool_set_score,
     tool_update_status,
 )
@@ -70,7 +71,6 @@ _READ_HANDLERS: dict[str, Any] = {
     "find_refs": tool_find_refs,
     "list_sections": tool_list_sections,
     "lint": tool_lint,
-    "next_id": tool_next_id,
 }
 
 _FAILURE_INDICATORS = ("rolled back", "not found", "failed", "required", "unknown status", "heading not found")
@@ -134,13 +134,20 @@ async def _dispatch(name: str, args: dict[str, Any]) -> str:
         return _READ_HANDLERS[name](args)
 
     if name in _WRITE_HANDLERS:
+        # asyncio lock keeps within-process fairness; fcntl flock gives cross-
+        # process atomicity for the entire read-modify-write-commit pipeline.
         async with _write_lock:
-            result = _WRITE_HANDLERS[name](args)
-            if _is_write_success(result) and os.environ.get("BACKLOG_AGENT_AUTOCOMMIT") == "1":
-                try:
-                    commit_and_push(REPO_ROOT, f"backlog: {name}")
-                except Exception as e:
-                    logger.warning("commit/push failed after %s: %s", name, e)
+            with backlog_lock(BACKLOG_PATH):
+                result = _WRITE_HANDLERS[name](args)
+                if _is_write_success(result) and os.environ.get("BACKLOG_AGENT_AUTOCOMMIT") == "1":
+                    try:
+                        commit_and_push(
+                            REPO_ROOT,
+                            f"backlog: {name}",
+                            paths=[BACKLOG_PATH, SCORES_PATH, CHANGELOG_INBOX_PATH],
+                        )
+                    except Exception as e:
+                        logger.warning("commit/push failed after %s: %s", name, e)
         return result
 
     return f"Unknown tool: {name}"

@@ -12,8 +12,6 @@ backlog without code changes:
                             if unset or missing (default: Backlog-Scores.csv next to BACKLOG_PATH)
     BACKLOG_REPO_ROOT       Repo root for git operations (default: parent of backlog;
                             falls back to `git rev-parse --show-toplevel`)
-    BACKLOG_ARCHIVE_PREFIX  Prefix that identifies the archive `## ` heading
-                            (default: "Done", matching `## Done — archive`)
     BACKLOG_CHANGELOG_INBOX Path to the CHANGELOG-INBOX append buffer
                             (default: CHANGELOG-INBOX.md at repo root)
 """
@@ -32,6 +30,7 @@ from mcp.server import Server
 from mcp.server.stdio import stdio_server
 from mcp.types import TextContent, Tool
 
+from .file_lock import backlog_lock
 from .lint import lint_file
 from .parser import (
     Item,
@@ -39,6 +38,7 @@ from .parser import (
     index_by_id,
     one_line_summary,
     parse_backlog,
+    parse_backlog_text,
     parse_scores,
 )
 
@@ -67,7 +67,6 @@ def _resolve_repo_root(backlog_path: Path) -> Path:
 
 BACKLOG_PATH = Path(os.environ.get("BACKLOG_PATH", "Backlog.md")).resolve()
 SCORES_PATH = Path(os.environ.get("BACKLOG_SCORES", BACKLOG_PATH.parent / "Backlog-Scores.csv")).resolve()
-ARCHIVE_PREFIX = os.environ.get("BACKLOG_ARCHIVE_PREFIX", "Done")
 REPO_ROOT = _resolve_repo_root(BACKLOG_PATH)
 CHANGELOG_INBOX_PATH = Path(
     os.environ.get("BACKLOG_CHANGELOG_INBOX", str(REPO_ROOT / "CHANGELOG-INBOX.md"))
@@ -75,7 +74,7 @@ CHANGELOG_INBOX_PATH = Path(
 
 
 def _items() -> tuple[list[Item], dict[int, Item]]:
-    items = parse_backlog(BACKLOG_PATH, archive_section_prefix=ARCHIVE_PREFIX)
+    items = parse_backlog(BACKLOG_PATH)
     return items, index_by_id(items)
 
 
@@ -234,13 +233,35 @@ def tool_lint(args: dict[str, Any]) -> str:
 
 # ---------- Phase 2 — write tools ------------------------------------------
 
+# Durable monotonic ID high-water mark. DONE items are *deleted* from the
+# backlog (not archived), so `max(live ids) + 1` alone can re-issue a retired
+# ID once the current top item is closed. The `<!-- next-id: N -->` marker
+# persists the high-water mark across deletions; the live max is only a
+# self-healing fallback for files that predate the marker.
+NEXT_ID_RE = re.compile(r"<!--\s*next-id:\s*(\d+)\s*-->")
+
+
+def _read_next_id_marker(text: str) -> int | None:
+    m = NEXT_ID_RE.search(text)
+    return int(m.group(1)) if m else None
+
+
+def _set_next_id_marker(text: str, value: int) -> str:
+    """Write/update the next-id marker, inserting it just below the title if absent."""
+    repl = f"<!-- next-id: {value} -->"
+    if NEXT_ID_RE.search(text):
+        return NEXT_ID_RE.sub(repl, text, count=1)
+    head, sep, rest = text.partition("\n")
+    return f"{head}\n{repl}\n{rest}" if sep else f"{repl}\n{text}"
+
+
+def _next_free_id_from_text(text: str) -> int:
+    live_max = max((it.id for it in parse_backlog_text(text)), default=0)
+    return max(_read_next_id_marker(text) or 0, live_max + 1)
+
+
 def _next_free_id() -> int:
-    items, _ = _items()
-    return (max((it.id for it in items), default=0)) + 1
-
-
-def tool_next_id(_args: dict[str, Any]) -> str:
-    return str(_next_free_id())
+    return _next_free_id_from_text(BACKLOG_PATH.read_text())
 
 
 def _verify_with_lint() -> tuple[bool, str]:
@@ -249,26 +270,25 @@ def _verify_with_lint() -> tuple[bool, str]:
 
 
 def tool_add_item(args: dict[str, Any]) -> str:
+    # Items are always written in heading format (`### #NNN [open] title` + body).
     # `section` defaults to "Inbox" — append-only buffer at the bottom of the
     # backlog, periodically curated into topical sections. Mirrors the
-    # CHANGELOG-INBOX → CHANGELOG flow. The file must contain a `## Inbox`
-    # heading (above the archive); add_item fails closed otherwise.
+    # CHANGELOG-INBOX → CHANGELOG flow. The target section heading must exist;
+    # add_item fails closed otherwise.
     section = args.get("section") or "Inbox"
     description = args["description"]
     body = (args.get("body") or "").strip()
-    files = args.get("files", "")
+    files = (args.get("files") or "").strip()
 
     text = BACKLOG_PATH.read_text()
-    new_id = _next_free_id()
-    if body:
-        # Heading-format: free-form markdown body. `files` ignored in this shape;
-        # if the caller passed it, fold it into the body as a leading line.
-        prefix = f"_Files: {files}_\n\n" if files else ""
-        new_row = f"### #{new_id} {description}\n\n{prefix}{body}\n\n"
-    else:
-        if not files:
-            return "files is required for table-format items (or pass body= for heading format)"
-        new_row = f"| {new_id} | {files} | {description} |\n"
+    new_id = _next_free_id_from_text(text)
+
+    # `files`, when given, becomes a leading `_Files: …_` line of the body.
+    files_line = f"_Files: {files}_\n\n" if files else ""
+    body_block = f"{files_line}{body}".strip()
+    new_row = f"### #{new_id} [open] {description}\n"
+    if body_block:
+        new_row += f"\n{body_block}\n"
 
     if " → " in section:
         _, h2 = section.split(" → ", 1)
@@ -290,12 +310,12 @@ def tool_add_item(args: dict[str, Any]) -> str:
         next_section.start() if next_section else len(rest) - len(anchor)
     )
 
-    pre = text[:insertion_end]
-    while pre.endswith("\n\n"):
-        pre = pre[:-1]
-    if not pre.endswith("\n"):
-        pre += "\n"
-    new_text = pre + new_row + text[insertion_end:].lstrip("\n")
+    # A heading item needs a blank line before and after it so renderers and the
+    # lint's heading-flush check stay happy.
+    pre = text[:insertion_end].rstrip("\n") + "\n\n"
+    suffix = text[insertion_end:].lstrip("\n")
+    new_text = pre + new_row.rstrip("\n") + "\n\n" + suffix
+    new_text = _set_next_id_marker(new_text, new_id + 1)
 
     BACKLOG_PATH.write_text(new_text)
     ok, msg = _verify_with_lint()
@@ -303,6 +323,27 @@ def tool_add_item(args: dict[str, Any]) -> str:
         BACKLOG_PATH.write_text(text)
         return f"add_item rolled back; lint failed:\n{msg}"
     return f"Added #{new_id} to {section!r}"
+
+
+def _delete_table_row(text: str, raw_line: str) -> str:
+    for candidate in (raw_line + "\n", raw_line):
+        if candidate in text:
+            return text.replace(candidate, "", 1)
+    return text
+
+
+def _delete_heading_block(text: str, raw_heading_line: str) -> str:
+    idx = text.find(raw_heading_line)
+    if idx == -1:
+        return text
+    end = idx + len(raw_heading_line)
+    rest = text[end:]
+    m = re.search(r"\n(?=#{2,3} )", rest)
+    # m.start() is the \n just before the next heading — don't include it so
+    # the blank-line separator before that heading is preserved.
+    block_end = end + (m.start() if m else len(rest))
+    return text[:idx] + text[block_end:]
+
 
 
 def tool_update_status(args: dict[str, Any]) -> str:
@@ -319,24 +360,33 @@ def tool_update_status(args: dict[str, Any]) -> str:
         return f"#{id_} not found"
     it = by_id[id_]
 
-    new_desc = re.sub(r"^\*\*IN PROGRESS \([^)]+\)\*\*\s*", "", it.description)
+    is_heading = it.raw_line.startswith("### ")
+    # description is already clean (status tag stripped by parser for both formats)
+    clean_desc = it.description
 
     if new_status == "in_progress":
         if not branch:
             return "branch is required for status=in_progress"
-        new_desc = f"**IN PROGRESS ({branch})** {new_desc}"
-        new_line = f"| {it.id} | {it.files} | {new_desc} |"
+        if is_heading:
+            new_line = f"### #{it.id} [in-progress: {branch}] {clean_desc}"
+        else:
+            new_line = f"| {it.id} | [in-progress: {branch}] | {it.files} | {clean_desc} |"
+        new_text = text.replace(it.raw_line, new_line)
     elif new_status == "done":
-        if not new_desc.lstrip().startswith("**DONE"):
-            done_marker = f"**DONE{f' ({summary})' if summary else ''}**"
-            new_desc = f"{done_marker} {new_desc}"
-        new_line = f"| ~~{it.id}~~ | ~~{it.files}~~ | {new_desc} |"
+        # Done items are deleted from Backlog.md; CHANGELOG-INBOX is the record.
+        if is_heading:
+            new_text = _delete_heading_block(text, it.raw_line)
+        else:
+            new_text = _delete_table_row(text, it.raw_line)
     elif new_status == "open":
-        new_line = f"| {it.id} | {it.files} | {new_desc} |"
+        if is_heading:
+            new_line = f"### #{it.id} [open] {clean_desc}"
+        else:
+            new_line = f"| {it.id} | [open] | {it.files} | {it.description} |"
+        new_text = text.replace(it.raw_line, new_line)
     else:
         return f"unknown status: {new_status!r} (use in_progress / done / open)"
 
-    new_text = text.replace(it.raw_line, new_line)
     BACKLOG_PATH.write_text(new_text)
     ok, msg = _verify_with_lint()
     if not ok:
@@ -344,6 +394,7 @@ def tool_update_status(args: dict[str, Any]) -> str:
         return f"update_status rolled back; lint failed:\n{msg}"
 
     changelog_note = ""
+    relocated_note = ""
     if new_status == "done" and changelog and summary:
         if CHANGELOG_INBOX_PATH.is_file():
             pr_ref = f" (PR #{pr})" if pr else ""
@@ -359,7 +410,7 @@ def tool_update_status(args: dict[str, Any]) -> str:
         else:
             changelog_note = "; CHANGELOG-INBOX not found — skipped"
 
-    return f"#{id_} status set to {new_status}{changelog_note}"
+    return f"#{id_} status set to {new_status}{relocated_note}{changelog_note}"
 
 
 def tool_set_score(args: dict[str, Any]) -> str:
@@ -474,21 +525,17 @@ TOOLS: list[tuple[str, str, dict, Any]] = [
         tool_lint,
     ),
     (
-        "next_id",
-        "Return the next free item ID without creating anything.",
-        {"type": "object", "properties": {}},
-        tool_next_id,
-    ),
-    (
         "add_item",
-        "Create a new backlog item with the next free ID. Defaults to the `## Inbox` "
-        "section (append-only buffer; curated into topical sections later). Pass an "
-        "explicit `section` only if you're confident which topical section it belongs "
-        "in. Pass `body` (free-form markdown, multi-paragraph OK) to write a heading-"
-        "format item (`### #NNN title` + body block) instead of a single-line table "
-        "row — use this when the item genuinely needs paragraphs, lists, or code "
-        "fences. `files` is required for table format, optional for heading format. "
-        "Verifies via lint and rolls back on failure.",
+        "Create a new backlog item. This is the ONLY way to create items — it "
+        "allocates the next free ID atomically (under a file lock) and returns it, "
+        "so concurrent callers never collide. Items are written in heading format "
+        "(`### #NNN [open] title` followed by an optional markdown body). Defaults to "
+        "the `## Inbox` section (append-only buffer; curated into topical sections "
+        "later) — pass an explicit `section` only when you're confident which topical "
+        "section it belongs in. Put the full design/finding prose in `body` (multi-"
+        "paragraph, lists, and code fences are fine); `files` is optional and, when "
+        "given, is rendered as a leading `_Files: …_` line. Verifies via lint and "
+        "rolls back on failure.",
         {
             "type": "object",
             "properties": {
@@ -496,12 +543,12 @@ TOOLS: list[tuple[str, str, dict, Any]] = [
                     "type": "string",
                     "description": "Section heading. Defaults to 'Inbox'. Use 'Section → Subsection' for nested.",
                 },
-                "files": {"type": "string"},
-                "description": {"type": "string", "description": "Single-line title."},
+                "description": {"type": "string", "description": "Single-line title (rendered after the ID)."},
                 "body": {
                     "type": "string",
-                    "description": "Optional. When set, item is written in heading format with this as the body.",
+                    "description": "Optional free-form markdown body — paragraphs, lists, code fences.",
                 },
+                "files": {"type": "string", "description": "Optional file/path list; rendered as a leading `_Files: …_` line."},
             },
             "required": ["description"],
         },
@@ -548,6 +595,10 @@ TOOLS: list[tuple[str, str, dict, Any]] = [
 
 TOOL_BY_NAME = {name: handler for name, _, _, handler in TOOLS}
 
+# Tools that mutate files on disk — wrapped in an fcntl flock so concurrent
+# stdio sessions (and any other process honouring backlog_lock) don't race.
+_WRITE_TOOL_NAMES = {"add_item", "update_status", "set_score"}
+
 
 @server.list_tools()
 async def handle_list_tools() -> list[Tool]:
@@ -563,7 +614,11 @@ async def handle_call_tool(name: str, arguments: dict[str, Any]) -> list[TextCon
     if handler is None:
         return [TextContent(type="text", text=f"Unknown tool: {name}")]
     try:
-        result = handler(arguments or {})
+        if name in _WRITE_TOOL_NAMES:
+            with backlog_lock(BACKLOG_PATH):
+                result = handler(arguments or {})
+        else:
+            result = handler(arguments or {})
     except Exception as e:
         result = f"{type(e).__name__}: {e}"
     return [TextContent(type="text", text=str(result))]
