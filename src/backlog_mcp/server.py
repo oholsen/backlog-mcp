@@ -38,6 +38,7 @@ from .parser import (
     index_by_id,
     one_line_summary,
     parse_backlog,
+    parse_backlog_text,
     parse_scores,
 )
 
@@ -232,13 +233,35 @@ def tool_lint(args: dict[str, Any]) -> str:
 
 # ---------- Phase 2 — write tools ------------------------------------------
 
+# Durable monotonic ID high-water mark. DONE items are *deleted* from the
+# backlog (not archived), so `max(live ids) + 1` alone can re-issue a retired
+# ID once the current top item is closed. The `<!-- next-id: N -->` marker
+# persists the high-water mark across deletions; the live max is only a
+# self-healing fallback for files that predate the marker.
+NEXT_ID_RE = re.compile(r"<!--\s*next-id:\s*(\d+)\s*-->")
+
+
+def _read_next_id_marker(text: str) -> int | None:
+    m = NEXT_ID_RE.search(text)
+    return int(m.group(1)) if m else None
+
+
+def _set_next_id_marker(text: str, value: int) -> str:
+    """Write/update the next-id marker, inserting it just below the title if absent."""
+    repl = f"<!-- next-id: {value} -->"
+    if NEXT_ID_RE.search(text):
+        return NEXT_ID_RE.sub(repl, text, count=1)
+    head, sep, rest = text.partition("\n")
+    return f"{head}\n{repl}\n{rest}" if sep else f"{repl}\n{text}"
+
+
+def _next_free_id_from_text(text: str) -> int:
+    live_max = max((it.id for it in parse_backlog_text(text)), default=0)
+    return max(_read_next_id_marker(text) or 0, live_max + 1)
+
+
 def _next_free_id() -> int:
-    items, _ = _items()
-    return (max((it.id for it in items), default=0)) + 1
-
-
-def tool_next_id(_args: dict[str, Any]) -> str:
-    return str(_next_free_id())
+    return _next_free_id_from_text(BACKLOG_PATH.read_text())
 
 
 def _verify_with_lint() -> tuple[bool, str]:
@@ -247,26 +270,25 @@ def _verify_with_lint() -> tuple[bool, str]:
 
 
 def tool_add_item(args: dict[str, Any]) -> str:
+    # Items are always written in heading format (`### #NNN [open] title` + body).
     # `section` defaults to "Inbox" — append-only buffer at the bottom of the
     # backlog, periodically curated into topical sections. Mirrors the
-    # CHANGELOG-INBOX → CHANGELOG flow. The file must contain a `## Inbox`
-    # heading (above the archive); add_item fails closed otherwise.
+    # CHANGELOG-INBOX → CHANGELOG flow. The target section heading must exist;
+    # add_item fails closed otherwise.
     section = args.get("section") or "Inbox"
     description = args["description"]
     body = (args.get("body") or "").strip()
-    files = args.get("files", "")
+    files = (args.get("files") or "").strip()
 
     text = BACKLOG_PATH.read_text()
-    new_id = _next_free_id()
-    if body:
-        # Heading-format: free-form markdown body. `files` ignored in this shape;
-        # if the caller passed it, fold it into the body as a leading line.
-        prefix = f"_Files: {files}_\n\n" if files else ""
-        new_row = f"### #{new_id} [open] {description}\n\n{prefix}{body}\n\n"
-    else:
-        if not files:
-            return "files is required for table-format items (or pass body= for heading format)"
-        new_row = f"| {new_id} | [open] | {files} | {description} |\n"
+    new_id = _next_free_id_from_text(text)
+
+    # `files`, when given, becomes a leading `_Files: …_` line of the body.
+    files_line = f"_Files: {files}_\n\n" if files else ""
+    body_block = f"{files_line}{body}".strip()
+    new_row = f"### #{new_id} [open] {description}\n"
+    if body_block:
+        new_row += f"\n{body_block}\n"
 
     if " → " in section:
         _, h2 = section.split(" → ", 1)
@@ -288,15 +310,12 @@ def tool_add_item(args: dict[str, Any]) -> str:
         next_section.start() if next_section else len(rest) - len(anchor)
     )
 
-    pre = text[:insertion_end]
-    while pre.endswith("\n\n"):
-        pre = pre[:-1]
-    if not pre.endswith("\n"):
-        pre += "\n"
-    suffix = text[insertion_end:]
-    if suffix.startswith("\n"):
-        suffix = "\n" + suffix.lstrip("\n")
-    new_text = pre + new_row + suffix
+    # A heading item needs a blank line before and after it so renderers and the
+    # lint's heading-flush check stay happy.
+    pre = text[:insertion_end].rstrip("\n") + "\n\n"
+    suffix = text[insertion_end:].lstrip("\n")
+    new_text = pre + new_row.rstrip("\n") + "\n\n" + suffix
+    new_text = _set_next_id_marker(new_text, new_id + 1)
 
     BACKLOG_PATH.write_text(new_text)
     ok, msg = _verify_with_lint()
@@ -506,21 +525,17 @@ TOOLS: list[tuple[str, str, dict, Any]] = [
         tool_lint,
     ),
     (
-        "next_id",
-        "Return the next free item ID without creating anything.",
-        {"type": "object", "properties": {}},
-        tool_next_id,
-    ),
-    (
         "add_item",
-        "Create a new backlog item with the next free ID. Defaults to the `## Inbox` "
-        "section (append-only buffer; curated into topical sections later). Pass an "
-        "explicit `section` only if you're confident which topical section it belongs "
-        "in. Pass `body` (free-form markdown, multi-paragraph OK) to write a heading-"
-        "format item (`### #NNN title` + body block) instead of a single-line table "
-        "row — use this when the item genuinely needs paragraphs, lists, or code "
-        "fences. `files` is required for table format, optional for heading format. "
-        "Verifies via lint and rolls back on failure.",
+        "Create a new backlog item. This is the ONLY way to create items — it "
+        "allocates the next free ID atomically (under a file lock) and returns it, "
+        "so concurrent callers never collide. Items are written in heading format "
+        "(`### #NNN [open] title` followed by an optional markdown body). Defaults to "
+        "the `## Inbox` section (append-only buffer; curated into topical sections "
+        "later) — pass an explicit `section` only when you're confident which topical "
+        "section it belongs in. Put the full design/finding prose in `body` (multi-"
+        "paragraph, lists, and code fences are fine); `files` is optional and, when "
+        "given, is rendered as a leading `_Files: …_` line. Verifies via lint and "
+        "rolls back on failure.",
         {
             "type": "object",
             "properties": {
@@ -528,12 +543,12 @@ TOOLS: list[tuple[str, str, dict, Any]] = [
                     "type": "string",
                     "description": "Section heading. Defaults to 'Inbox'. Use 'Section → Subsection' for nested.",
                 },
-                "files": {"type": "string"},
-                "description": {"type": "string", "description": "Single-line title."},
+                "description": {"type": "string", "description": "Single-line title (rendered after the ID)."},
                 "body": {
                     "type": "string",
-                    "description": "Optional. When set, item is written in heading format with this as the body.",
+                    "description": "Optional free-form markdown body — paragraphs, lists, code fences.",
                 },
+                "files": {"type": "string", "description": "Optional file/path list; rendered as a leading `_Files: …_` line."},
             },
             "required": ["description"],
         },

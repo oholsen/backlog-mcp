@@ -1,8 +1,13 @@
 # Backlog.md format specification
 
-## Two item formats
+## Item formats
 
-### Table rows (simple items)
+The parser reads **two** shapes (below), but `add_item` only ever **writes** the
+heading format — most new items are long design notes or findings, so the heading
+shape is the single creation format. Existing table rows remain valid to read and
+edit in place.
+
+### Table rows (legacy / manual)
 
 ```
 | # | Status | File | Description |
@@ -45,15 +50,23 @@ Rules:
 
 ## ID assignment
 
-IDs are monotonically increasing integers. To find the highest existing ID:
+IDs are monotonically increasing integers and are **never reused**. The source of
+truth is a durable marker near the top of the file:
 
-```bash
-grep -oP '(?<=^\| )\d+(?= \| )' Backlog.md | sort -n | tail -1
-# or for heading-format items:
-grep -oP '(?<=^### #)\d+' Backlog.md | sort -n | tail -1
+```markdown
+<!-- next-id: 1199 -->
 ```
 
-The next free ID is `max + 1`. IDs are never reused.
+`add_item` reads this marker, assigns its value as the new ID, and bumps it by one —
+all under a file lock, so concurrent callers never collide. The marker survives DONE
+deletions, which a `max(live IDs) + 1` scan does **not**: because DONE items are
+deleted (not archived), once the highest item is closed the live max drops and a scan
+would re-issue its number.
+
+If the marker is missing (e.g. a file that predates it), `add_item` falls back to
+`max(live IDs) + 1` and writes the marker on the next add. Reseed it manually to
+`max(all IDs ever assigned) + 1` — cross-checking any deleted-item record
+(`CHANGELOG-INBOX`, `CHANGELOG`) so the seed sits above retired IDs.
 
 ---
 
