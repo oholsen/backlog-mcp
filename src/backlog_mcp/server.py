@@ -19,6 +19,8 @@ backlog without code changes:
 from __future__ import annotations
 
 import asyncio
+import csv
+import io
 import json
 import os
 import re
@@ -415,15 +417,24 @@ def tool_update_status(args: dict[str, Any]) -> str:
 
 def tool_set_score(args: dict[str, Any]) -> str:
     id_ = int(args["id"])
-    complexity = args.get("complexity")
-    value = args.get("value")
-    ready = args.get("ready", "")
-    blocked_by = args.get("blocked_by", [])
-    tags = args.get("tags", [])
-    notes = args.get("notes", "")
 
     if not SCORES_PATH.exists():
         SCORES_PATH.write_text("id,complexity,value,ready,blocked_by,tags,notes\n")
+
+    # Merge against the existing row: a caller updating one field (e.g. just
+    # `value`) must not blank the fields it didn't pass. Only keys actually
+    # present in `args` override; everything else keeps the stored value.
+    existing = parse_scores(SCORES_PATH).get(id_)
+
+    def pick(key: str, current: Any) -> Any:
+        return args[key] if key in args else current
+
+    complexity = pick("complexity", existing.complexity if existing else None)
+    value = pick("value", existing.value if existing else None)
+    ready = pick("ready", existing.ready if existing else "")
+    blocked_by = pick("blocked_by", existing.blocked_by if existing else [])
+    tags = pick("tags", existing.tags if existing else [])
+    notes = pick("notes", existing.notes if existing else "")
 
     text = SCORES_PATH.read_text()
     lines = text.splitlines(keepends=True)
@@ -440,10 +451,20 @@ def tool_set_score(args: dict[str, Any]) -> str:
         else str(blocked_by)
     )
     tags_str = ";".join(tags) if isinstance(tags, list) else str(tags)
-    new_row = (
-        f"{id_},{complexity if complexity is not None else ''},"
-        f"{value if value is not None else ''},{ready},{blocked_str},{tags_str},{notes}\n"
-    )
+    # Write through csv so fields containing the column delimiter — notes with a
+    # comma, or a multi-value blocked_by like "783,784" — get quoted instead of
+    # corrupting the row on the next DictReader parse.
+    buf = io.StringIO()
+    csv.writer(buf, lineterminator="").writerow([
+        id_,
+        complexity if complexity is not None else "",
+        value if value is not None else "",
+        ready or "",
+        blocked_str,
+        tags_str,
+        notes or "",
+    ])
+    new_row = buf.getvalue() + "\n"
 
     replaced = False
     for i, line in enumerate(lines):
@@ -575,7 +596,10 @@ TOOLS: list[tuple[str, str, dict, Any]] = [
     ),
     (
         "set_score",
-        "Insert or update a row in the scoring CSV.",
+        "Insert or update a row in the scoring CSV. Update merges: only the "
+        "fields you pass are changed; omitted fields keep their existing values "
+        "(pass `value` alone and complexity/ready/tags/notes are preserved). To "
+        "clear a field, pass it explicitly empty.",
         {
             "type": "object",
             "properties": {
