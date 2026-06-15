@@ -189,3 +189,127 @@ def commit_changes(
     if skipped:
         status += f"; left unstaged due to concurrent-edit conflict: {skipped}"
     return status
+
+
+# ---------------------------------------------------------------------------
+# Transactional write: sync→apply→commit→push with re-apply retry.
+#
+# `commit_changes` above commits whatever hunks it's handed on top of the
+# *current* HEAD and, on a non-fast-forward push, leaves the commit local —
+# which is how unpushed commits pile up when HEAD lags origin or two writers
+# race. `transactional_write` closes that: it syncs the checkout to origin
+# *before* applying (so IDs are allocated against the live next-id marker and
+# the resulting commit fast-forwards), and on a push race it drops the local
+# commit, re-syncs, and re-runs the write — re-minting any allocated ID from
+# the now-current marker so a race never duplicates an ID. The caller must hold
+# the write lock; this serializes within a process, the push race-loop handles
+# the cross-process / cross-machine case.
+# ---------------------------------------------------------------------------
+
+_DEFAULT_BRANCH = "main"
+# Substrings git emits when a push is rejected because origin moved (a race),
+# as opposed to a network/auth error we must not silently discard.
+_NONFF_MARKERS = ("non-fast-forward", "fetch first", "rejected", "updates were rejected", "behind")
+
+
+def _current_branch(repo_root: Path) -> str:
+    cp = _git(repo_root, "rev-parse", "--abbrev-ref", "HEAD")
+    branch = cp.stdout.strip()
+    return branch if cp.returncode == 0 and branch and branch != "HEAD" else _DEFAULT_BRANCH
+
+
+def _has_origin(repo_root: Path) -> bool:
+    return _git(repo_root, "remote", "get-url", "origin").returncode == 0
+
+
+def _working_tree_clean(repo_root: Path) -> bool:
+    return _git(repo_root, "status", "--porcelain").stdout.strip() == ""
+
+
+def sync_to_origin(repo_root: Path, branch: str | None = None) -> bool:
+    """Fast-forward the checkout to `origin/<branch>` before a write, so the
+    mutation is applied — and any next-id allocated — on top of the latest
+    origin and the resulting commit pushes fast-forward.
+
+    Returns True if HEAD is now at `origin/<branch>` (synced, or already there).
+    Returns False — and the caller must NOT enter the reset-and-retry loop —
+    when sync is unsafe or impossible: no `origin` remote, a failed fetch, or a
+    working tree with uncommitted changes we must not clobber (a concurrent
+    hand-edit). The `reset --hard` is gated on a clean tree precisely so it can
+    never discard such an edit.
+    """
+    branch = branch or _current_branch(repo_root)
+    if not _has_origin(repo_root):
+        return False
+    if _git(repo_root, "fetch", "origin", branch).returncode != 0:
+        return False
+    if not _working_tree_clean(repo_root):
+        return False
+    return _git(repo_root, "reset", "--hard", f"origin/{branch}").returncode == 0
+
+
+def _push(repo_root: Path, branch: str | None = None) -> str:
+    """Push HEAD to `origin/<branch>`. Returns 'pushed', 'push-race' (rejected
+    because origin moved — retryable), or 'push-error' (anything else — keep the
+    commit local, don't retry)."""
+    branch = branch or _current_branch(repo_root)
+    cp = _git(repo_root, "push", "origin", f"HEAD:{branch}")
+    if cp.returncode == 0:
+        return "pushed"
+    blob = f"{cp.stderr or ''}\n{cp.stdout or ''}".lower()
+    return "push-race" if any(m in blob for m in _NONFF_MARKERS) else "push-error"
+
+
+def transactional_write(
+    repo_root: Path,
+    tracked: list[Path],
+    apply_fn,
+    message: str,
+    *,
+    push: bool = True,
+    branch: str | None = None,
+    max_attempts: int = 4,
+) -> tuple[str, str]:
+    """Serialized, atomic backlog write: sync→origin · apply · stage only our
+    hunks · commit · push, with bounded re-apply retry on a push race.
+
+    `apply_fn` is a zero-arg callable returning `(ok: bool, result: str)` that
+    performs the file mutation (e.g. the add_item / update_status handler) and
+    reports whether it succeeded. It is re-invoked on each attempt, so an
+    ID-allocating add re-reads the now-current next-id marker after a re-sync
+    and never duplicates.
+
+    Returns `(result, status)`. A write whose push fails for a non-race reason
+    (network/auth), or one made on an un-syncable tree (dirty / no origin), is
+    committed locally and reported — never silently dropped. Caller holds the
+    write lock.
+    """
+    branch = branch or _current_branch(repo_root)
+    result = ""
+    for attempt in range(1, max_attempts + 1):
+        # sync_to_origin's `reset --hard origin/<branch>` both pulls the latest
+        # origin AND drops any prior attempt's local commit (the tree is clean
+        # after a hunk-safe commit), so each attempt starts from the live tip.
+        synced = sync_to_origin(repo_root, branch)
+        before = {p: (p.read_text() if p.exists() else "") for p in tracked}
+        ok, result = apply_fn()
+        if not ok:
+            return result, "apply-failed (no commit)"
+        after = {p: (p.read_text() if p.exists() else "") for p in tracked}
+        changes = [(p, before[p], after[p]) for p in tracked if before[p] != after[p]]
+        status = commit_changes(repo_root, changes, message, push=False)
+        if not status.startswith("committed"):
+            return result, status  # nothing staged / conflict / commit failed
+        if not push:
+            return result, status + " (push disabled)"
+        outcome = _push(repo_root, branch)
+        if outcome == "pushed":
+            return result, f"committed and pushed (attempt {attempt})"
+        if outcome == "push-error":
+            return result, "committed locally (push error; manual push needed)"
+        # push-race
+        if not synced:
+            return result, "committed locally (unsynced tree; manual reconcile)"
+        # retry: next iteration's sync resets to the origin tip that beat us
+        logger.info("push race on %s (attempt %d); re-syncing and retrying", message, attempt)
+    return result, f"push race persisted after {max_attempts} attempts; committed locally"
