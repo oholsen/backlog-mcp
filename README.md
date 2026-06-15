@@ -157,7 +157,8 @@ backlog-agent          # listens on 127.0.0.1:8765 by default
 |---|---|---|
 | `BACKLOG_AGENT_HOST` | `127.0.0.1` | Bind address |
 | `BACKLOG_AGENT_PORT` | `8765` | Bind port |
-| `BACKLOG_AGENT_AUTOCOMMIT` | unset | Set to `1` to git-commit and push after each successful write |
+| `BACKLOG_AGENT_AUTOCOMMIT` | unset | Set to `1` to git-commit (and push) after each successful write. Staging is **hunk-safe**: only this write's `before`→`after` hunks are committed, applied on top of `HEAD` via a 3-way merge, so concurrent unstaged edits another session left in `Backlog.md` are never swept in. If a concurrent edit conflicts with this write, or the index already has staged changes, the write is left uncommitted (and logged) rather than force-committed. |
+| `BACKLOG_AGENT_PUSH` | `1` | When autocommit is on, set to `0` to commit locally without `git push`. |
 | `ANTHROPIC_API_KEY` | — | Required for the `query` tool only |
 | `BACKLOG_AGENT_MODEL` | `claude-sonnet-4-6` | Claude model for `query` |
 

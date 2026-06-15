@@ -32,7 +32,7 @@ from starlette.routing import Mount
 
 from .agent import query_backlog
 from .file_lock import backlog_lock
-from .git_ops import commit_and_push
+from .git_ops import commit_changes
 from .server import (
     BACKLOG_PATH,
     CHANGELOG_INBOX_PATH,
@@ -138,14 +138,26 @@ async def _dispatch(name: str, args: dict[str, Any]) -> str:
         # process atomicity for the entire read-modify-write-commit pipeline.
         async with _write_lock:
             with backlog_lock(BACKLOG_PATH):
+                autocommit = os.environ.get("BACKLOG_AGENT_AUTOCOMMIT") == "1"
+                tracked = [BACKLOG_PATH, SCORES_PATH, CHANGELOG_INBOX_PATH]
+                # Snapshot the tracked files *before* the write so we can commit
+                # only this write's before->after hunks — never any concurrent
+                # unstaged edits another session left in the same files.
+                before = (
+                    {p: (p.read_text() if p.exists() else "") for p in tracked}
+                    if autocommit
+                    else {}
+                )
                 result = _WRITE_HANDLERS[name](args)
-                if _is_write_success(result) and os.environ.get("BACKLOG_AGENT_AUTOCOMMIT") == "1":
+                if autocommit and _is_write_success(result):
                     try:
-                        commit_and_push(
-                            REPO_ROOT,
-                            f"backlog: {name}",
-                            paths=[BACKLOG_PATH, SCORES_PATH, CHANGELOG_INBOX_PATH],
-                        )
+                        after = {p: (p.read_text() if p.exists() else "") for p in tracked}
+                        changes = [
+                            (p, before[p], after[p]) for p in tracked if before[p] != after[p]
+                        ]
+                        push = os.environ.get("BACKLOG_AGENT_PUSH", "1") != "0"
+                        status = commit_changes(REPO_ROOT, changes, f"backlog: {name}", push=push)
+                        logger.info("autocommit after %s: %s", name, status)
                     except Exception as e:
                         logger.warning("commit/push failed after %s: %s", name, e)
         return result
