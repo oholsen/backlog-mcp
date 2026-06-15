@@ -318,6 +318,12 @@ def transactional_write(
         # push-race
         if not synced:
             return result, "committed locally (unsynced tree; manual reconcile)"
-        # retry: next iteration's sync resets to the origin tip that beat us
+        # We synced cleanly, so our just-made commit is the only thing ahead of
+        # origin — drop it explicitly (the sync guard intentionally refuses to
+        # reset over commits that are ahead, to protect another writer's pending
+        # work, so we can't rely on the next sync to drop ours). The next
+        # iteration's sync then fast-forwards to the origin tip that beat us and
+        # apply_fn re-mints against the fresh marker.
+        _git(repo_root, "reset", "--hard", "HEAD~1")
         logger.info("push race on %s (attempt %d); re-syncing and retrying", message, attempt)
     return result, f"push race persisted after {max_attempts} attempts; committed locally"
