@@ -163,3 +163,15 @@ def test_sync_fast_forwards_clean_tree(tmp_path):
     _git(other, "push", "-q", "origin", "main")
     assert sync_to_origin(repo) is True
     assert (repo / "extra.md").exists()  # pulled
+
+
+def test_sync_skips_when_local_ahead(tmp_path):
+    """A local commit not yet on origin must NOT be discarded by the reset."""
+    origin, [repo] = _origin_and_clones(tmp_path)
+    (repo / "Backlog.md").write_text(SEED + "\nlocal unpushed work\n")
+    _git(repo, "add", "Backlog.md")
+    _git(repo, "commit", "-q", "-m", "local unpushed")
+    head = _git(repo, "rev-parse", "HEAD").stdout.strip()
+    assert sync_to_origin(repo) is False  # skipped, not reset
+    assert _git(repo, "rev-parse", "HEAD").stdout.strip() == head  # commit preserved
+    assert "local unpushed work" in (repo / "Backlog.md").read_text()

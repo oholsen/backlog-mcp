@@ -233,10 +233,12 @@ def sync_to_origin(repo_root: Path, branch: str | None = None) -> bool:
 
     Returns True if HEAD is now at `origin/<branch>` (synced, or already there).
     Returns False — and the caller must NOT enter the reset-and-retry loop —
-    when sync is unsafe or impossible: no `origin` remote, a failed fetch, or a
+    when sync is unsafe or impossible: no `origin` remote, a failed fetch, a
     working tree with uncommitted changes we must not clobber (a concurrent
-    hand-edit). The `reset --hard` is gated on a clean tree precisely so it can
-    never discard such an edit.
+    hand-edit), or local commits not yet on origin (the `reset --hard` would
+    discard them — instead we skip, and the write commits on top so the pending
+    commit gets pushed along). The reset is gated on a clean, not-ahead tree so
+    it can never discard committed or uncommitted local work.
     """
     branch = branch or _current_branch(repo_root)
     if not _has_origin(repo_root):
@@ -244,6 +246,12 @@ def sync_to_origin(repo_root: Path, branch: str | None = None) -> bool:
     if _git(repo_root, "fetch", "origin", branch).returncode != 0:
         return False
     if not _working_tree_clean(repo_root):
+        return False
+    # Never discard local commits that haven't reached origin: if HEAD is ahead
+    # of origin/<branch>, skip the reset (a shared checkout may carry another
+    # writer's not-yet-pushed commit).
+    ahead = _git(repo_root, "rev-list", "--count", f"origin/{branch}..HEAD").stdout.strip()
+    if ahead not in ("", "0"):
         return False
     return _git(repo_root, "reset", "--hard", f"origin/{branch}").returncode == 0
 
