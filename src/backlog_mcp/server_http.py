@@ -32,7 +32,7 @@ from starlette.routing import Mount
 
 from .agent import query_backlog
 from .file_lock import backlog_lock
-from .git_ops import commit_changes
+from .git_ops import transactional_write
 from .server import (
     BACKLOG_PATH,
     CHANGELOG_INBOX_PATH,
@@ -139,28 +139,26 @@ async def _dispatch(name: str, args: dict[str, Any]) -> str:
         async with _write_lock:
             with backlog_lock(BACKLOG_PATH):
                 autocommit = os.environ.get("BACKLOG_AGENT_AUTOCOMMIT") == "1"
+                if not autocommit:
+                    # Legacy: edit only; the session commits the working tree.
+                    return _WRITE_HANDLERS[name](args)
+
                 tracked = [BACKLOG_PATH, SCORES_PATH, CHANGELOG_INBOX_PATH]
-                # Snapshot the tracked files *before* the write so we can commit
-                # only this write's before->after hunks — never any concurrent
-                # unstaged edits another session left in the same files.
-                before = (
-                    {p: (p.read_text() if p.exists() else "") for p in tracked}
-                    if autocommit
-                    else {}
+                push = os.environ.get("BACKLOG_AGENT_PUSH", "1") != "0"
+
+                # The handler is re-invoked per attempt: on a push race the
+                # transaction re-syncs to origin and re-runs it, so an
+                # ID-allocating add re-reads the fresh next-id marker and never
+                # duplicates. Hunk-safe staging never sweeps concurrent edits.
+                def _apply() -> tuple[bool, str]:
+                    r = _WRITE_HANDLERS[name](args)
+                    return _is_write_success(r), r
+
+                result, status = transactional_write(
+                    REPO_ROOT, tracked, _apply, f"backlog: {name}", push=push
                 )
-                result = _WRITE_HANDLERS[name](args)
-                if autocommit and _is_write_success(result):
-                    try:
-                        after = {p: (p.read_text() if p.exists() else "") for p in tracked}
-                        changes = [
-                            (p, before[p], after[p]) for p in tracked if before[p] != after[p]
-                        ]
-                        push = os.environ.get("BACKLOG_AGENT_PUSH", "1") != "0"
-                        status = commit_changes(REPO_ROOT, changes, f"backlog: {name}", push=push)
-                        logger.info("autocommit after %s: %s", name, status)
-                    except Exception as e:
-                        logger.warning("commit/push failed after %s: %s", name, e)
-        return result
+                logger.info("autocommit after %s: %s", name, status)
+                return result
 
     return f"Unknown tool: {name}"
 
