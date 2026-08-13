@@ -183,3 +183,44 @@ def test_one_line_summary_truncates():
     s = one_line_summary(long, max_chars=50)
     assert len(s) == 50
     assert s.endswith("…")
+
+
+def test_fenced_heading_does_not_truncate_body_or_leak_section():
+    """A `## `/`### ` line inside a fenced code block is body text.
+
+    Before this fix the parser flushed the body on any such line, so an item
+    whose body pastes a console dump was truncated at the opening fence AND the
+    next item was filed under a phantom section read from inside the fence.
+    Found 2026-08-13 from the sensor repo (#1822); the fence rule is ported from
+    its scripts/backlog_fences.py.
+    """
+    md = (
+        "# Backlog\n\n## Inbox\n\n"
+        "### #9001 [open] item with a pasted gate dump\n\n"
+        "_Files: a.sh_\n\nIntro prose.\n\n"
+        "```\n## ·  (devices 309 -> 0)\nPASS Collection\n```\n\n"
+        "TAIL: this belongs to #9001.\n\n"
+        "### #9002 [open] neighbour\n\n_Files: b.sh_\n\nNeighbour body.\n"
+    )
+    items = {i.id: i for i in parse_backlog_text(md)}
+    assert set(items) == {9001, 9002}
+    # The body survives whole, fence and all.
+    assert "TAIL: this belongs to #9001." in items[9001].body
+    assert "PASS Collection" in items[9001].body
+    # And the fenced `## ` line did not become a section heading.
+    assert items[9002].section == "Inbox"
+
+
+def test_mismatched_fence_delimiters_are_content():
+    """A `~~~` inside a backtick fence (and a short run inside a long one) is
+    content — closing there would re-expose the following lines as structure."""
+    md = (
+        "# Backlog\n\n## Inbox\n\n"
+        "### #9001 [open] a\n\n"
+        "````\n```\n~~~\n## not a section\n````\n\n"
+        "TAIL kept.\n\n"
+        "### #9002 [open] b\n\nBody.\n"
+    )
+    items = {i.id: i for i in parse_backlog_text(md)}
+    assert "TAIL kept." in items[9001].body
+    assert items[9002].section == "Inbox"

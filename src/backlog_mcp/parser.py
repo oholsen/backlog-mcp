@@ -41,6 +41,41 @@ class Score:
     notes: str = ""
 
 
+# Fenced-code-block tracking. A `## `/`### ` line INSIDE a fenced block is body
+# text, not structure — but this parser flushed the item body on any such line,
+# so an item whose body pastes a console dump was truncated at the opening fence
+# AND the next item was filed under a phantom section read from inside the fence.
+# Ported from the sensor repo's scripts/backlog_fences.py (#1817/#1822), which is
+# the one parser its backlog tools share.
+#
+# A fence closes only on the SAME delimiter character with a run at least as long
+# as the opener, and a closer carries no info string. Toggling on any ``` / ~~~
+# is wrong in both directions: a `~~~` inside a backtick fence, or a 3-backtick
+# line inside a 4-backtick fence, is content.
+_FENCE = re.compile(r"^\s*(`{3,}|~{3,})")
+
+
+def _fence_step(state, line):
+    """Advance fence state across `line`; None means outside a fence."""
+    m = _FENCE.match(line)
+    d = (m.group(1)[0], len(m.group(1))) if m else None
+    if state is None:
+        return d
+    ch, n = state
+    if d and d[0] == ch and d[1] >= n and line.strip()[d[1]:].strip() == "":
+        return None
+    return state
+
+
+def _outside(prev, state):
+    """True when the line that took `prev` -> `state` is real structure.
+
+    Both must be None: `prev` excludes the closer (which ends outside but
+    belongs to the fence), `state` excludes the opener and the body.
+    """
+    return prev is None and state is None
+
+
 def parse_backlog_text(text: str) -> list[Item]:
     """Parse a backlog markdown file (as text) into a list of Items."""
     items: list[Item] = []
@@ -62,7 +97,14 @@ def parse_backlog_text(text: str) -> list[Item]:
             items[-1].body = "\n".join(b)
         body_buf = None
 
+    fence_state = None
     for line in text.splitlines():
+        prev_fence, fence_state = fence_state, _fence_step(fence_state, line)
+        if not _outside(prev_fence, fence_state):
+            # Inside (or delimiting) a fenced block: pure body content.
+            if body_buf is not None:
+                body_buf.append(line)
+            continue
         if line.startswith("## "):
             flush_body()
             section = line[3:].strip()
